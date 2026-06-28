@@ -1,0 +1,40 @@
+# Panel Everything — compose 部署(树莓派 arm64 主目标)。
+#
+# 使用 compose v2 顶层字段(mem_limit 在 docker compose v2 / Docker Engine 上直接生效;
+# Pi5/8GB 取 512m。若用纯 Swarm(docker stack)需改用 deploy.resources.limits.memory)。
+#
+#   docker compose up -d --build
+#   docker compose ps        # 查看 health 状态
+#   docker compose logs -f panel
+
+services:
+  panel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: panel-everything:latest
+    container_name: panel-everything
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data                                   # SQLite 单文件挂宿主卷
+      # --- 凭证只读挂载(TASK-005):将宿主 ./secrets 目录以只读方式挂入容器 ---
+      # 约定: ./secrets/<name> 对应 PANEL_SECRETS_DIR(默认 /secrets)
+      # 用法示例: read_secret("azure_client_secret") 读取 /secrets/azure_client_secret
+      # - ./secrets:/secrets:ro                        # 凭证只读挂载(ARCH-002 Azure/SSH key)
+      # --- 以下卷由后续模块卡按需启用 ---
+      # - /var/run/tailscale:/var/run/tailscale:ro     # Tailscale localapi socket(只读, ARCH-003)
+    mem_limit: 512m                                     # Pi5/8GB: 384–512M
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz').status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
