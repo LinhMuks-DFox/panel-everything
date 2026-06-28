@@ -12,6 +12,50 @@
 
 ---
 
+## 快速开始（一键启动）
+
+不想了解细节？在仓库根目录敲一条命令即可把面板跑起来：
+
+```bash
+./start.sh            # 或： make up
+```
+
+`start.sh` 会自动完成：
+
+1. **前置检查**：确认 `docker` 与 `docker compose`（v2）可用、守护进程在运行；缺失时给出安装/启动提示并退出非零。
+2. **首次自举**：若无 `.env` 则从 `.env.example` 复制一份；若无 `./secrets/` 则创建（权限 700）；同时创建 `./data/`（SQLite 卷）。
+3. **优雅降级检查**：检查 `secrets/azure_client_secret` 与 `secrets/id_ed25519` 是否存在，**缺失只 warning 不阻断**——不配 Azure / SSH 私钥也能起，对应监控（Azure VM 电源态 / GPU `nvidia-smi`）自动禁用。
+4. **构建并启动**：`docker compose up -d --build`（树莓派 arm64 依赖 Dockerfile 多 arch，本机直接构建）。
+5. **等待就绪**：轮询 `http://localhost:<PANEL_PORT>/healthz`（端口取自 `.env`，默认 8080）直到返回 200，超时则打印最近 50 行日志并退出非零。
+6. **收尾**：打印本机访问地址，并在装有 Tailscale 时给出 tailnet 地址（`http://<tailscale-ip>:<port>/`）与后续 `make` 命令。
+
+### 选项
+
+```bash
+./start.sh --seed         # 就绪后自动注册 A100（等价 make up-seed；见 §5）
+./start.sh --no-build     # 跳过镜像重建，用已有镜像快速启动
+./start.sh --timeout 120  # 自定义就绪等待秒数（默认 90，Pi 首次构建可调大）
+./start.sh --help         # 查看帮助
+```
+
+### make 傻瓜目标
+
+| 命令 | 作用 |
+|------|------|
+| `make up` | 一键启动（= `./start.sh`） |
+| `make up-seed` | 一键启动并预置注册 A100 |
+| `make status` | `docker compose ps` + healthz 探测 |
+| `make logs` | 跟随实时日志 |
+| `make down` | 停止并移除容器 |
+| `make rebuild` | `down` 后重新构建启动 |
+| `make seed` | 单独运行 `scripts/seed_a100.sh` 注册 A100 |
+
+> **幂等**：`start.sh` 可重复执行——`compose up -d` 幂等，已注册的 A100 由 seed 脚本识别 409 视为成功。
+> 想启用 Azure / GPU 监控，仍需按下文 §1、§3 准备 Service Principal 与 SSH 私钥后重跑 `./start.sh`。
+> **安全**：面板无认证，仅依赖 Tailscale 内网边界，请勿把端口暴露到公网（见 §6）。
+
+---
+
 ## 0. 总览：要准备的三样东西
 
 | # | 内容 | 落地方式 |
