@@ -5,10 +5,13 @@
 
 时间约定:库内统一存 ISO8601 UTC 字符串。MetricSample/CollectorResult 的 datetime
 写库前经 _iso() 归一化为 UTC,读出的时间经 _parse_utc() 还原为带 tz 的 datetime。
+
+ARCH-003 / TASK-020 扩展:Tailscale 专用表行类型 + upsert/查询方法。
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -327,3 +330,228 @@ class Repository:
             error=row["error"],
             ran_at=row["ran_at"],
         )
+
+
+# --------------------------------------------------------------------------- #
+# ARCH-003 / TASK-020: Tailscale 专用行类型
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(slots=True)
+class TailscaleNodeRow:
+    """tailscale_nodes 表的单行映射。"""
+
+    id: int
+    node_key: str
+    hostname: str
+    dns_name: str | None
+    tailscale_ips: list[str]  # json.loads 后的列表
+    os: str | None
+    online_state: str
+    is_exit_node: bool
+    last_seen_at: datetime | None  # UTC; None when online
+    collected_at: datetime
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class TailscaleNodeEventRow:
+    """tailscale_node_events 表的单行映射。"""
+
+    id: int
+    node_key: str
+    from_state: str | None  # None 表示首次发现
+    to_state: str
+    occurred_at: datetime
+    note: str | None
+
+
+# --------------------------------------------------------------------------- #
+# ARCH-003 / TASK-020: Tailscale repository 扩展方法
+# --------------------------------------------------------------------------- #
+# 直接追加到现有 Repository 类——Python 允许在模块尾部 monkey-patch,
+# 但更整洁的做法是在类体内声明。由于不能修改类体封口处,这里用 setattr 注入。
+# 为保持代码可读性,以下函数定义后统一 setattr 到 Repository。
+
+
+async def _upsert_tailscale_node(
+    self: Repository,
+    node_key: str,
+    hostname: str,
+    dns_name: str | None,
+    tailscale_ips: list[str],
+    os: str | None,
+    online_state: str,
+    is_exit_node: bool,
+    last_seen_at: datetime | None,
+    collected_at: datetime,
+) -> int:
+    """UPSERT ON CONFLICT(node_key); 若 online_state 变更则写 tailscale_node_events。
+
+    Returns:
+        tailscale_nodes.id (新插入或已存在行的主键)。
+    """
+    now = _now_iso()
+    collected_iso = _iso(collected_at)
+    last_seen_iso = _iso(last_seen_at) if last_seen_at is not None else None
+    ips_json = json.dumps(tailscale_ips)
+
+    # 先查旧状态,以便判断是否要写 event
+    async with self._conn.execute(
+        "SELECT id, online_state FROM tailscale_nodes WHERE node_key = ?",
+        (node_key,),
+    ) as cur:
+        existing = await cur.fetchone()
+
+    is_exit_int = 1 if is_exit_node else 0
+
+    if existing is None:
+        # 首次插入
+        await self._conn.execute(
+            """
+            INSERT INTO tailscale_nodes
+                (node_key, hostname, dns_name, tailscale_ips, os,
+                 online_state, is_exit_node, last_seen_at, collected_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                node_key, hostname, dns_name, ips_json, os,
+                online_state, is_exit_int, last_seen_iso, collected_iso, now,
+            ),
+        )
+        # 取新行 id
+        async with self._conn.execute(
+            "SELECT id FROM tailscale_nodes WHERE node_key = ?", (node_key,)
+        ) as cur2:
+            row2 = await cur2.fetchone()
+        node_id: int = row2["id"]
+        # 写首次发现事件
+        await self._conn.execute(
+            """
+            INSERT INTO tailscale_node_events
+                (node_key, from_state, to_state, occurred_at, note)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (node_key, None, online_state, collected_iso, "first_seen"),
+        )
+    else:
+        node_id = existing["id"]
+        old_state: str = existing["online_state"]
+        # UPSERT: 更新全部字段
+        await self._conn.execute(
+            """
+            UPDATE tailscale_nodes SET
+                hostname       = ?,
+                dns_name       = ?,
+                tailscale_ips  = ?,
+                os             = ?,
+                online_state   = ?,
+                is_exit_node   = ?,
+                last_seen_at   = ?,
+                collected_at   = ?,
+                updated_at     = ?
+            WHERE node_key = ?
+            """,
+            (
+                hostname, dns_name, ips_json, os,
+                online_state, is_exit_int, last_seen_iso, collected_iso, now,
+                node_key,
+            ),
+        )
+        # 仅在状态变更时写事件
+        if old_state != online_state:
+            await self._conn.execute(
+                """
+                INSERT INTO tailscale_node_events
+                    (node_key, from_state, to_state, occurred_at, note)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (node_key, old_state, online_state, collected_iso, None),
+            )
+
+    await self._conn.commit()
+    return node_id
+
+
+async def _get_all_nodes(self: Repository) -> list[TailscaleNodeRow]:
+    """返回所有 tailscale_nodes 行,按 hostname 升序。"""
+    async with self._conn.execute(
+        """
+        SELECT id, node_key, hostname, dns_name, tailscale_ips, os,
+               online_state, is_exit_node, last_seen_at, collected_at, updated_at
+        FROM tailscale_nodes
+        ORDER BY hostname
+        """
+    ) as cur:
+        return [_to_node_row(r) async for r in cur]
+
+
+async def _get_node_by_id(self: Repository, node_id: int) -> TailscaleNodeRow | None:
+    """按 id 返回单节点;不存在则 None。"""
+    async with self._conn.execute(
+        """
+        SELECT id, node_key, hostname, dns_name, tailscale_ips, os,
+               online_state, is_exit_node, last_seen_at, collected_at, updated_at
+        FROM tailscale_nodes WHERE id = ?
+        """,
+        (node_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    return _to_node_row(row) if row is not None else None
+
+
+async def _get_node_events(
+    self: Repository,
+    node_key: str,
+    limit: int = 100,
+) -> list[TailscaleNodeEventRow]:
+    """返回指定节点最近 limit 条事件,按 occurred_at 降序。"""
+    async with self._conn.execute(
+        """
+        SELECT id, node_key, from_state, to_state, occurred_at, note
+        FROM tailscale_node_events
+        WHERE node_key = ?
+        ORDER BY occurred_at DESC
+        LIMIT ?
+        """,
+        (node_key, limit),
+    ) as cur:
+        return [_to_event_row(r) async for r in cur]
+
+
+# --- 行映射辅助函数 ---
+
+
+def _to_node_row(row: aiosqlite.Row) -> TailscaleNodeRow:
+    raw_last_seen: str | None = row["last_seen_at"]
+    return TailscaleNodeRow(
+        id=row["id"],
+        node_key=row["node_key"],
+        hostname=row["hostname"],
+        dns_name=row["dns_name"],
+        tailscale_ips=json.loads(row["tailscale_ips"] or "[]"),
+        os=row["os"],
+        online_state=row["online_state"],
+        is_exit_node=bool(row["is_exit_node"]),
+        last_seen_at=_parse_utc(raw_last_seen) if raw_last_seen else None,
+        collected_at=_parse_utc(row["collected_at"]),
+        updated_at=_parse_utc(row["updated_at"]),
+    )
+
+
+def _to_event_row(row: aiosqlite.Row) -> TailscaleNodeEventRow:
+    return TailscaleNodeEventRow(
+        id=row["id"],
+        node_key=row["node_key"],
+        from_state=row["from_state"],
+        to_state=row["to_state"],
+        occurred_at=_parse_utc(row["occurred_at"]),
+        note=row["note"],
+    )
+
+
+# 注入到 Repository 类
+Repository.upsert_tailscale_node = _upsert_tailscale_node  # type: ignore[attr-defined]
+Repository.get_all_nodes = _get_all_nodes  # type: ignore[attr-defined]
+Repository.get_node_by_id = _get_node_by_id  # type: ignore[attr-defined]
+Repository.get_node_events = _get_node_events  # type: ignore[attr-defined]

@@ -1,12 +1,12 @@
 ---
 id: TASK-020
 title: "Tailscale 采集器 + 数据库表 + 在线判定逻辑"
-status: todo
+status: review
 priority: P1
 architecture: ARCH-003
 dependencies: [TASK-003]
 estimated_effort: M
-executed_by:
+executed_by: claude-sonnet-4-6
 created: 2026-06-28
 updated: 2026-06-28
 ---

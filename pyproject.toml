@@ -62,3 +62,6 @@ ignore = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "integration: live integration tests requiring real hardware/services (deselect with -m 'not integration')",
+]
