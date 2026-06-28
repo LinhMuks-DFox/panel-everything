@@ -37,32 +37,33 @@
 | TASK-013 | SSH GPU 采集器(asyncssh + nvidia-smi 多卡解析) | ARCH-002 | P1 | done | opus-4.8 | 2026-06-28 |
 | TASK-014 | Azure+GPU dashboard 聚合 API | ARCH-002 | P1 | done | sonnet-4.6 | 2026-06-28 |
 | TASK-015 | 前端 VmCard + GpuCard + 状态徽标(e-ink 适配) | ARCH-002 | P1 | done | sonnet-4.6 | 2026-06-28 |
-| TASK-016 | GPU 历史降采样 job(5m/1h) + 趋势查询 API | ARCH-002 | P2 | todo | — | 2026-06-28 |
-| TASK-017 | 前端 GPU 趋势迷你图(默认折叠) | ARCH-002 | P2 | todo | — | 2026-06-28 |
-| TASK-018 | Azure 动态公网 IP 解析 + 只读 SP 认证对齐 | ARCH-002 | P1 | todo | — | 2026-06-28 |
-| TASK-019 | 只读 SP 创建指引 + A100 预置注册 + 部署文档 | ARCH-002 | P1 | todo | — | 2026-06-28 |
+| TASK-016 | GPU 历史降采样 job(5m/1h) + 趋势查询 API | ARCH-002 | P2 | done | agents | 2026-06-28 |
+| TASK-017 | 前端 GPU 趋势迷你图(默认折叠) | ARCH-002 | P2 | done | agents | 2026-06-28 |
+| TASK-018 | Azure 动态公网 IP 解析 + 只读 SP 认证对齐 | ARCH-002 | P1 | done | agents | 2026-06-28 |
+| TASK-019 | 只读 SP 创建指引 + A100 预置注册 + 部署文档 | ARCH-002 | P1 | done | agents | 2026-06-28 |
 | TASK-024 | 服务器注册管理 Web 表单(REQ-002 注册入口) | ARCH-002 | P1 | done | opus-4.8 | 2026-06-28 |
 | TASK-020 | Tailscale 采集器(socket localapi) + 表 + 在线判定 | ARCH-003 | P1 | done | sonnet-4.6 | 2026-06-28 |
 | TASK-021 | Tailscale REST API | ARCH-003 | P1 | done | sonnet-4.6 | 2026-06-28 |
 | TASK-022 | 前端 NodeCard/NodeGrid/StaleWarning(e-ink 适配) | ARCH-003 | P1 | done | sonnet-4.6 | 2026-06-28 |
 | TASK-023 | Azure-Tailscale 节点关联(node_azure_mapping + 徽标) *(P3 deferred)* | ARCH-003 | P3 | todo | — | 2026-06-28 |
-| TASK-030 | 面板摄取端点 POST /api/ingest/ai-usage + ai_provider 表 | ARCH-004 | P2 | todo | — | 2026-06-28 |
-| TASK-031 | 工作站 Reporter MVP:Codex 本地解析 | ARCH-004 | P2 | todo | — | 2026-06-28 |
-| TASK-032 | Reporter 扩展:Claude OAuth usage(带 JSONL 回退) | ARCH-004 | P3 | todo | — | 2026-06-28 |
-| TASK-033 | 前端 AI 额度卡片(泛化渲染, stale) | ARCH-004 | P2 | todo | — | 2026-06-28 |
-| TASK-040 | 通用 metric_history retention job | ARCH-001 | P2 | todo | — | 2026-06-28 |
+| TASK-030 | 面板摄取端点 POST /api/ingest/ai-usage + ai_provider 表 | ARCH-004 | P2 | done | agents | 2026-06-28 |
+| TASK-031 | 工作站 Reporter MVP:Codex 本地解析 | ARCH-004 | P2 | done | agents | 2026-06-28 |
+| TASK-032 | Reporter 扩展:Claude Code jsonl(带 OAuth 回退) | ARCH-004 | P3 | done | agents | 2026-06-28 |
+| TASK-033 | 前端 AI 额度卡片(泛化渲染, stale) | ARCH-004 | P2 | done | agents | 2026-06-28 |
+| TASK-040 | 通用 metric_history retention job | ARCH-001 | P2 | done | agents | 2026-06-28 |
 
-> **已交付**: TASK-001~005 (MS-001) + TASK-010~015、020~022、024 (MS-002)，全部 done。
-> **本轮启动**: MS-003（GPU 趋势：TASK-016/017）、MS-004（AI 额度：TASK-030~033）、MS-005（REQ-002 真实对齐 + retention：TASK-018/019/040）三里程碑**并行进入实现**。TASK-023 降级 P3，暂缓。
+> **已交付**: TASK-001~005 (MS-001) + TASK-010~015、020~022、024 (MS-002) + TASK-016/017/018/019/030/031/032/033/040 (MS-003/004/005)，全部 done。
+> **本轮交付（多 Agent 并行波次）**: MS-003（GPU 趋势）、MS-004（AI 额度）、MS-005（REQ-002 真实对齐 + retention）三里程碑代码完成并提交；经 7 维对抗式评审（18 条确证发现，修复 15 / 延后 3）+ 全套测试。TASK-023 降级 P3，暂缓。
+> **附加交付**: `start.sh` + `Makefile` 傻瓜一键启动；`docs/modules/` 全模块开发者文档（10 模块 + 索引）。
 
 ## 质量指标
 
-- **测试覆盖率**: 97%（308 passed，+1 integration 活体；1240 语句 / 42 未覆盖）— MS-002 基线，本轮新卡待补测
+- **测试**: 427 passed（`-m "not integration"`），ruff 全绿，`from panel.main import app` 正常
 - **已知 Bug**: 0 open / 1 fixed（BUG-001 Tailscale localapi 协议，已修复）
-- **已交付任务**: 14（MS-001 5 卡 + MS-002 9 卡，全部 done）
-- **本轮在制任务**: 8（MS-003: 016/017；MS-004: 030~033；MS-005: 018/019/040）
-- **延后任务**: 1（TASK-023，P3 deferred）
-- **里程碑**: MS-001/MS-002 delivered；MS-003/MS-004/MS-005 in-progress（本轮并行实现）
+- **已交付任务**: 23（MS-001 5 + MS-002 9 + MS-003/004/005 9，全部 done）
+- **延后/后续**: TASK-023（P3 deferred）；评审延后 3 项（e-ink 灰度死代码、retention 回填桶、reporter 测试断言）；建议后续 asyncssh 延迟导入根治 Mac VZ SIGILL
+- **运行验证**: 面板已在开发机（colima/QEMU）`Up (healthy)`，`/healthz` ok，各数据源未配置时优雅降级
+- **里程碑**: MS-001/MS-002 delivered；MS-003/MS-004/MS-005 代码交付（待真机 A100 / Reporter 部署 / 人类验收）
 
 ## 里程碑概览
 
