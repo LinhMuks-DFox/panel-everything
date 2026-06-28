@@ -4,20 +4,24 @@
   {# ---- Data-source status banner ---- #}
   {% include "partials/_datasource_status.html" %}
 
+  {# ---- TASK-015: Azure VM + GPU card (ARCH-002) ---- #}
+  {% include "partials/_vm_card.html" %}
+
+  {# ---- TASK-022: Tailscale node grid (ARCH-003) ---- #}
+  {% include "partials/_node_grid.html" %}
+
   {# ---- Module card slots (module cards inject their partials here) ---- #}
   {#
-     Convention for module Coders (ARCH-002/003):
+     Convention for module Coders (ARCH-003/004):
      - Add your partial file as  partials/_<module>.html
      - Each root element must be  <section class="card" data-module="<name>">
      - Include it below with:  {% include "partials/_<module>.html" %}
      Example:
-       {% include "partials/_vm_card.html" %}
        {% include "partials/_node_card.html" %}
-       {% include "partials/_gpu_card.html" %}
   #}
 
   {# Placeholder shown when no module cards are present yet #}
-  {% if not collector_statuses %}
+  {% if not collector_statuses and (azure_dashboard is not defined or azure_dashboard is none) %}
   <section class="card card--empty" data-module="placeholder">
     <p class="card-empty-msg">采集器尚未注册。模块卡就绪后将在此显示。</p>
   </section>

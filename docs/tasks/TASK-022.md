@@ -1,12 +1,12 @@
 ---
 id: TASK-022
 title: "前端 NodeCard/NodeGrid/StaleWarning（e-ink 适配）"
-status: todo
+status: review
 priority: P1
 architecture: ARCH-003
 dependencies: [TASK-004, TASK-021]
 estimated_effort: M
-executed_by:
+executed_by: claude-sonnet-4-6
 created: 2026-06-28
 updated: 2026-06-28
 ---

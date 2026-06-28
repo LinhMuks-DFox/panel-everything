@@ -1,0 +1,64 @@
+{#
+  _node_grid.html — TASK-022 / ARCH-003
+  Tailscale 网络节点网格 + StaleWarning 横幅。
+
+  Context variables (injected by web/routes.py index handler):
+    nodes             list[TailscaleNodeRow | NodeResponse-like]
+    nodes_online      int   — count of ONLINE nodes
+    nodes_total       int   — total node count
+    collector_status  str   — "up" | "down" | "error" | "never_run"
+    collector_error   str | None
+    is_stale          bool  — True when last successful run > stale threshold ago
+    stale_seconds     int   — threshold value (for display in banner text)
+
+  Graceful degradation:
+    - nodes=[] renders empty grid container (no 500).
+    - collector_status="never_run" shows neutral status-stale dot.
+    - collector_status not in ("up","never_run") shows error banner.
+    - is_stale=True shows stale-data warning banner.
+
+  e-ink: no box-shadow, no animation, no transition.
+#}
+
+<section class="card" data-module="tailscale" id="tailscale-section">
+  <h2 class="card-title">
+    {# Color + shape + aria-label: three-layer encoding on the collector status #}
+    <span class="status-dot
+      {%- if collector_status == 'up' %} status-ok
+      {%- elif collector_status == 'never_run' %} status-stale
+      {%- else %} status-error{%- endif %}"
+      aria-label="{{ collector_status }}">
+      {%- if collector_status == 'up' %}●
+      {%- elif collector_status == 'never_run' %}◌
+      {%- else %}○{%- endif %}
+    </span>
+    Tailscale 网络
+    <span class="node-summary">
+      {{ nodes_online }}/{{ nodes_total }} 在线
+    </span>
+  </h2>
+
+  {# Stale warning: data older than stale threshold (text + shape ◌ encode staleness) #}
+  {% if is_stale %}
+  <div class="datasource-banner" role="alert">
+    <span class="status-dot status-stale" aria-hidden="true">◌</span>
+    数据已超过 {{ stale_seconds }}s 未更新，可能不反映当前状态
+  </div>
+  {% endif %}
+
+  {# Collector error banner: shown when collector is down or errored #}
+  {% if collector_status not in ('up', 'never_run') %}
+  <div class="datasource-banner datasource-banner--issues" role="alert">
+    <span class="status-dot status-error" aria-hidden="true">○</span>
+    Tailscale 数据源异常：{{ collector_error or '采集器未响应' }}
+  </div>
+  {% endif %}
+
+  {# Node grid: one card per tailnet peer #}
+  <div class="node-grid" id="node-grid">
+    {% for node in nodes %}
+      {% include "partials/_node_card.html" %}
+    {% endfor %}
+  </div>
+
+</section>

@@ -1,0 +1,65 @@
+{#
+  _node_card.html — TASK-022 / ARCH-003
+  Tailscale 单节点卡片。
+
+  Context variables (set by _node_grid.html loop):
+    node  — TailscaleNodeRow (or NodeResponse-like object with the fields below)
+      node.id               int
+      node.hostname         str
+      node.tailscale_ips    list[str]  — usually [IPv4, IPv6]
+      node.os               str | None
+      node.online_state     "ONLINE" | "OFFLINE" | "LONG_OFFLINE"
+      node.is_exit_node     bool
+      node.is_stale         bool
+      node.last_seen        datetime | None  (UTC; None when ONLINE)
+
+  Jinja2 filters registered in routes.py:
+    datetimeformat(value, fmt)  — datetime → "YYYY-MM-DD HH:MM UTC"; None → "—"
+
+  Three-layer state encoding (color + shape + text), e-ink safe:
+    ONLINE       → status-ok   ●  在线
+    OFFLINE      → status-warn ◐  离线
+    LONG_OFFLINE → status-error ○  长期离线
+
+  e-ink constraints: no box-shadow, no animation, no transition.
+#}
+<article class="node-card" data-node-id="{{ node.id }}"
+         data-state="{{ node.online_state }}"
+         aria-label="{{ node.hostname }} {{ node.online_state }}">
+
+  <header class="node-card__header">
+    {# Color + shape layer #}
+    <span class="status-dot
+      {%- if node.online_state == 'ONLINE' %} status-ok
+      {%- elif node.online_state == 'OFFLINE' %} status-warn
+      {%- else %} status-error{%- endif %}"
+      aria-hidden="true">
+      {%- if node.online_state == 'ONLINE' %}●
+      {%- elif node.online_state == 'OFFLINE' %}◐
+      {%- else %}○{%- endif %}
+    </span>
+    <span class="node-card__hostname">{{ node.hostname }}</span>
+    {% if node.is_exit_node %}
+    <span class="node-card__badge node-card__badge--exit" title="Exit Node">⇢</span>
+    {% endif %}
+  </header>
+
+  {# Text layer: meta information #}
+  <dl class="node-card__meta">
+    <dt>IP</dt>
+    <dd class="node-card__ip">{{ node.tailscale_ips[0] if node.tailscale_ips else '—' }}</dd>
+    <dt>OS</dt>
+    <dd>{{ node.os or '—' }}</dd>
+    {# Show last_seen only when not online — text layer of state encoding #}
+    {% if node.online_state != 'ONLINE' and node.last_seen %}
+    <dt>最后在线</dt>
+    <dd class="node-card__last-seen">{{ node.last_seen | datetimeformat }}</dd>
+    {% endif %}
+  </dl>
+
+  {# Stale indicator: data-freshness signal (shape ◌ + aria-label text) #}
+  {% if node.is_stale %}
+  <div class="node-card__stale-mark" aria-label="数据已过时">◌</div>
+  {% endif %}
+
+</article>

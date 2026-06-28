@@ -454,3 +454,336 @@ a:focus-visible {
 .card .code-wrap {
   overflow-x: auto;
 }
+
+/* ── ARCH-002: Azure VM / GPU Cards (TASK-015) ──────────────────────────── */
+/*
+ * e-ink constraints: NO box-shadow, NO animation, NO @keyframes.
+ * Three-layer state encoding on .status-dot (color + shape ●◐○◌ + text).
+ * Threshold fill classes (bar-ok/warn/critical) map to semantic state colors.
+ */
+
+/* ── VM card ──────────────────────────────────────────────────────────────── */
+.vm-card {
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.vm-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.vm-name {
+  font-weight: 600;
+}
+
+.vm-state-label {
+  color: var(--text-sub);
+  font-size: 0.85em;
+}
+
+.stale-badge {
+  font-size: 0.75em;
+  color: var(--warn);
+  margin-left: auto;
+}
+
+.vm-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.1rem 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--text-sub);
+  margin: 0 0 0.4rem;
+}
+
+.vm-meta dt {
+  color: var(--muted);
+}
+
+.vm-meta dd {
+  margin: 0;
+}
+
+/* ── Metric bar row (util / memory) ───────────────────────────────────────── */
+.metric-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.2rem 0;
+}
+
+.metric-label {
+  font-size: 0.8em;
+  width: 2.5rem;
+  flex-shrink: 0;
+  color: var(--text-sub);
+}
+
+.metric-value {
+  font-size: 0.8em;
+  width: 6.5rem;
+  text-align: right;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+/* Threshold fill colors — applied alongside .metric-bar__fill from ARCH-001 */
+.bar-fill.bar-ok       { background: var(--ok); }
+.bar-fill.bar-warn     { background: var(--warn); }
+.bar-fill.bar-critical { background: var(--error); }
+
+/* ── GPU card ──────────────────────────────────────────────────────────────── */
+.gpu-list {
+  margin-top: 0.5rem;
+}
+
+.gpu-card {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.gpu-card.gpu-stale {
+  border-color: var(--warn);
+  opacity: 0.85;
+}
+
+.gpu-label {
+  font-size: 0.85em;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+  color: var(--text);
+}
+
+.gpu-name-small {
+  font-weight: normal;
+  color: var(--text-sub);
+  margin-left: 0.3rem;
+  font-size: 0.9em;
+}
+
+.gpu-meta-row {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.8em;
+  color: var(--text-sub);
+  margin-top: 0.2rem;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+.gpu-unreachable {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+/* ── Responsive: single column on narrow screens ─────────────────────────── */
+@media (max-width: 599px) {
+  .vm-card {
+    padding: 0.6rem 0.75rem;
+  }
+
+  .metric-value {
+    width: 5.5rem;
+  }
+}
+
+/* ── e-ink / print overrides for ARCH-002 section ────────────────────────── */
+/*
+ * On e-ink (Kindle): no border-radius curves, no fill background shading,
+ * rely on shape symbol + text label only for state encoding.
+ * Triggered by print media (also used for screenshot export).
+ */
+@media print {
+  .vm-card,
+  .gpu-card {
+    border: 1px solid #000;
+    background: #fff;
+    border-radius: 0;
+  }
+
+  .gpu-card.gpu-stale {
+    border-color: #888;
+  }
+
+  .stale-badge {
+    color: #555;
+  }
+
+  .bar-fill.bar-ok,
+  .bar-fill.bar-warn,
+  .bar-fill.bar-critical {
+    background: #555;
+  }
+}
+
+/* Kindle narrow + e-ink (color-index: 2 = 2-color / grayscale) */
+@media screen and (max-width: 800px) and (color-index: 2) {
+  .vm-card,
+  .gpu-card {
+    border-radius: 0;
+  }
+
+  .gpu-card {
+    background: none;
+    border: 1px solid var(--border-strong);
+  }
+}
+
+/* ── End ARCH-002 ──────────────────────────────────────────────────────────── */
+
+/* ── ARCH-003: Tailscale node grid (TASK-022) ───────────────────────────────
+ *
+ * e-ink constraints: NO box-shadow, NO animation rules, NO keyframe blocks, NO transition.
+ * Three-layer state encoding on .status-dot (color + shape ●◐○◌ + text label).
+ * Symbols:  ●  ONLINE   ◐  OFFLINE   ○  LONG_OFFLINE   ◌  stale/never_run
+ *
+ * LONG_OFFLINE cards are visually de-emphasised with opacity: 0.55 so they
+ * remain present on screen without competing with active nodes.
+ * (opacity < 1 is intentional for e-ink; Kindle renders it as partial shade)
+ */
+
+/* ── Node grid layout ────────────────────────────────────────────────────────── */
+.node-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.5rem;
+}
+
+/* Three responsive breakpoints */
+@media (max-width: 599px) {
+  .node-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+}
+
+@media (min-width: 600px) and (max-width: 1023px) {
+  .node-grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .node-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
+}
+
+/* ── Node card ───────────────────────────────────────────────────────────────── */
+.node-card {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  /* e-ink: NO box-shadow */
+}
+
+.node-card__header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  overflow: hidden;
+}
+
+.node-card__hostname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Term/definition grid for IP, OS, last-seen */
+.node-card__meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 0.4rem;
+  font-size: 0.75rem;
+  margin: 0.3rem 0 0;
+  color: var(--text-sub);
+}
+
+.node-card__meta dt {
+  color: var(--muted);
+}
+
+.node-card__meta dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Exit-node badge  ⇢  (monospaced border box — e-ink visible, no color-only) */
+.node-card__badge--exit {
+  font-size: 0.7rem;
+  border: 1px solid currentColor;
+  padding: 0 2px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* Stale mark ◌ — bottom-right corner indicator */
+.node-card__stale-mark {
+  font-size: 0.7rem;
+  color: var(--text-sub);
+  text-align: right;
+  margin-top: 0.2rem;
+}
+
+/* In-card node summary (x/y online) displayed in the section h2 */
+.node-summary {
+  font-size: 0.8rem;
+  font-weight: normal;
+  margin-left: auto;
+  color: var(--text-sub);
+}
+
+/* LONG_OFFLINE de-emphasis — opacity only (no hue shift for e-ink) */
+.node-card[data-state="LONG_OFFLINE"] {
+  opacity: 0.55;
+}
+
+/* ── e-ink / print overrides for ARCH-003 section ────────────────────────────
+ * On Kindle (print emulation): no border-radius, rely on shape + text only.
+ */
+@media print {
+  .node-card {
+    border: 1px solid #000;
+    border-radius: 0;
+    background: #fff;
+  }
+
+  .node-card[data-state="LONG_OFFLINE"] {
+    opacity: 1;
+    border-color: #888;
+  }
+
+  .node-card__meta,
+  .node-card__stale-mark,
+  .node-summary {
+    color: #444;
+  }
+}
+
+/* Kindle narrow + e-ink (color-index: 2 = 2-color / grayscale) */
+@media screen and (max-width: 800px) and (color-index: 2) {
+  .node-card {
+    border-radius: 0;
+  }
+}
+
+/* ── End ARCH-003 ──────────────────────────────────────────────────────────── */
