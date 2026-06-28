@@ -1,0 +1,2 @@
+0, NVIDIA GeForce RTX 3090, 55, 12000, 24576, [Not Supported], [Not Supported]
+1, NVIDIA GeForce RTX 3090, [N/A], 2048, 24576, 50, 220

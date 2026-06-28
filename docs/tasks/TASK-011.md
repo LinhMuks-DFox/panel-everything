@@ -1,7 +1,7 @@
 ---
 id: TASK-011
 title: "服务器注册 CRUD API（凭证不回传）"
-status: review
+status: done
 priority: P1
 architecture: ARCH-002
 dependencies: [TASK-010, TASK-005]

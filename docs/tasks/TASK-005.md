@@ -1,7 +1,7 @@
 ---
 id: TASK-005
 title: "配置与凭证管理 + response model 白名单 + 日志脱敏"
-status: review
+status: done
 priority: P0
 architecture: ARCH-001
 dependencies: [TASK-001]

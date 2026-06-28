@@ -1,7 +1,7 @@
 ---
 id: TASK-003
 title: "Collector 框架:协议 + 注册表 + APScheduler 调度 + 框架级降级"
-status: review
+status: done
 priority: P0
 architecture: ARCH-001
 dependencies: [TASK-002]

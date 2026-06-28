@@ -1,7 +1,7 @@
 ---
 id: TASK-004
 title: "SSR 前端壳:base 布局 + 响应式/e-ink CSS + 轮询/meta-refresh 降级"
-status: review
+status: done
 priority: P0
 architecture: ARCH-001
 dependencies: [TASK-001]

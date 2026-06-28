@@ -1,7 +1,7 @@
 ---
 id: TASK-002
 title: "SQLite(WAL) 连接 + 通用 schema 基线 + repository 薄层"
-status: review
+status: done
 priority: P0
 architecture: ARCH-001
 dependencies: [TASK-001]

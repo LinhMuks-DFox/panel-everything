@@ -19,3 +19,8 @@ async def get_repo(request: Request) -> Repository:
 async def get_gpu_repo(request: Request) -> GpuRepository:
     """Return the shared GpuRepository instance stored in app.state.gpu_repo."""
     return request.app.state.gpu_repo
+
+
+async def get_scheduler(request: Request):  # noqa: ANN201 — AsyncIOScheduler 延迟导入
+    """Return the shared AsyncIOScheduler instance stored in app.state."""
+    return request.app.state.scheduler

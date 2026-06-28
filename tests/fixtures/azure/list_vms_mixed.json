@@ -1,0 +1,28 @@
+[
+  {
+    "name": "gpu-vm-01",
+    "instance_view": {
+      "statuses": [
+        {"code": "ProvisioningState/succeeded", "display_status": "Provisioning succeeded"},
+        {"code": "PowerState/running", "display_status": "VM running"}
+      ]
+    }
+  },
+  {
+    "name": "gpu-vm-02",
+    "instance_view": {
+      "statuses": [
+        {"code": "ProvisioningState/succeeded", "display_status": "Provisioning succeeded"},
+        {"code": "PowerState/deallocated", "display_status": "VM deallocated"}
+      ]
+    }
+  },
+  {
+    "name": "unregistered-vm",
+    "instance_view": {
+      "statuses": [
+        {"code": "PowerState/running", "display_status": "VM running"}
+      ]
+    }
+  }
+]

@@ -1,12 +1,12 @@
 ---
 id: TASK-013
 title: "SSH GPU 采集器（asyncssh + nvidia-smi 多卡解析）"
-status: todo
+status: done
 priority: P1
 architecture: ARCH-002
 dependencies: [TASK-003, TASK-010]
 estimated_effort: M
-executed_by:
+executed_by: claude-opus-4-8[1m]
 created: 2026-06-28
 updated: 2026-06-28
 ---

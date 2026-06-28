@@ -1,0 +1,135 @@
+{#
+  _vm_card.html — TASK-015 / ARCH-002
+  Azure VM + GPU 监控卡片。
+
+  Context variables (injected by routes.py):
+    azure_dashboard  — DashboardAzureOut Pydantic model (or None when unavailable)
+
+  Jinja2 globals registered in routes.py:
+    vm_status_class(vm)         → "ok" / "warn" / "error" / "stale"
+    vm_status_symbol(vm)        → "●" / "◐" / "○" / "◌"
+    util_threshold_class(pct)   → "bar-ok" / "bar-warn" / "bar-critical"
+    mem_threshold_class(pct)    → "" / "bar-ok" / "bar-warn" / "bar-critical"
+
+  Three-layer state encoding (color + shape + text) on every status indicator.
+  e-ink safe: no box-shadow, no animation, no transition inside ARCH-002 section.
+#}
+
+{% if azure_dashboard is defined and azure_dashboard is not none %}
+<section class="card" data-module="azure" id="azure-section">
+  <h2 class="card-title">Azure 云服务器</h2>
+
+  {# ── Collector health banner ────────────────────────────────────────────── #}
+  {% set vm_cs = azure_dashboard.collector_status.get("azure_vm") %}
+  {% if vm_cs and vm_cs.status in ("down", "error") %}
+  <div class="datasource-banner datasource-banner--issues" role="alert">
+    <span class="status-dot status-error" aria-hidden="true">○</span>
+    <span>数据源异常 — {{ vm_cs.error or "Azure VM 采集失败" }}</span>
+  </div>
+  {% elif vm_cs and vm_cs.status == "unknown" %}
+  <div class="datasource-banner" role="status">
+    <span class="status-dot status-stale" aria-hidden="true">◌</span>
+    <span>Azure VM 采集器尚未运行（凭证未配置或首次启动）</span>
+  </div>
+  {% endif %}
+
+  {# ── VM list ─────────────────────────────────────────────────────────────── #}
+  {% if azure_dashboard.vms %}
+    {% for vm in azure_dashboard.vms %}
+    <article class="vm-card" data-server-id="{{ vm.server_id }}">
+
+      {# ── VM header: status dot + name + state label + stale badge ─────── #}
+      <header class="vm-header">
+        <span class="status-dot status-{{ vm_status_class(vm) }}"
+              aria-label="{{ vm.power_state }}">{{ vm_status_symbol(vm) }}</span>
+        <span class="vm-name">{{ vm.name }}</span>
+        <span class="vm-state-label">{{ vm.power_state }}</span>
+        {% if vm.is_stale %}
+        <span class="stale-badge" title="采集时间超出阈值，数据可能不准确">⚠ 陈旧</span>
+        {% endif %}
+      </header>
+
+      {# ── VM meta ─────────────────────────────────────────────────────────── #}
+      <dl class="vm-meta">
+        <dt>资源组</dt><dd>{{ vm.azure_resource_group or "—" }}</dd>
+      </dl>
+
+      {# ── GPU cards ───────────────────────────────────────────────────────── #}
+      {% if vm.gpus %}
+      <div class="gpu-list">
+        {% for gpu in vm.gpus %}
+        <div class="gpu-card{% if gpu.is_stale %} gpu-stale{% endif %}"
+             data-gpu-index="{{ gpu.gpu_index }}">
+
+          <div class="gpu-label">
+            GPU {{ gpu.gpu_index }}
+            {% if gpu.gpu_name %}
+            <span class="gpu-name-small">{{ gpu.gpu_name }}</span>
+            {% endif %}
+          </div>
+
+          {% if gpu.util_pct is not none %}
+            {# ── Utilisation bar ───────────────────────────────────────────── #}
+            <div class="metric-bar-row">
+              <span class="metric-label">算力</span>
+              <div class="metric-bar" role="img"
+                   aria-label="GPU算力 {{ gpu.util_pct | round(1) }}%">
+                <div class="metric-bar__fill bar-fill {{ util_threshold_class(gpu.util_pct) }}"
+                     style="--pct: {{ gpu.util_pct | round(1) }}%"></div>
+              </div>
+              <span class="metric-value">{{ gpu.util_pct | round(1) }}%</span>
+            </div>
+
+            {# ── Memory bar ────────────────────────────────────────────────── #}
+            {% if gpu.mem_pct is not none %}
+            <div class="metric-bar-row">
+              <span class="metric-label">显存</span>
+              <div class="metric-bar" role="img"
+                   aria-label="显存 {{ gpu.mem_pct | round(1) }}%">
+                <div class="metric-bar__fill bar-fill {{ mem_threshold_class(gpu.mem_pct) }}"
+                     style="--pct: {{ gpu.mem_pct | round(1) }}%"></div>
+              </div>
+              <span class="metric-value">
+                {%- if gpu.mem_used_mib is not none and gpu.mem_total_mib is not none -%}
+                  {{ (gpu.mem_used_mib / 1024) | round(1) }}G /
+                  {{ (gpu.mem_total_mib / 1024) | round(1) }}G
+                {%- else -%}
+                  {{ gpu.mem_pct | round(1) }}%
+                {%- endif -%}
+              </span>
+            </div>
+            {% endif %}
+
+            {# ── Temp / power ──────────────────────────────────────────────── #}
+            <div class="gpu-meta-row">
+              {% if gpu.temp_c is not none %}
+              <span>{{ gpu.temp_c | round(0) | int }}°C</span>
+              {% endif %}
+              {% if gpu.power_w is not none %}
+              <span>{{ gpu.power_w | round(0) | int }}W</span>
+              {% endif %}
+            </div>
+
+          {% else %}
+            {# ── Unreachable GPU ───────────────────────────────────────────── #}
+            <div class="gpu-unreachable">
+              <span class="status-dot status-error" aria-hidden="true">○</span>
+              不可达
+            </div>
+          {% endif %}
+
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+    </article>
+    {% endfor %}
+
+  {% else %}
+    {# ── Empty state: no VMs registered ──────────────────────────────────── #}
+    <p class="card-empty-msg">暂无已注册的 Azure 云服务器。</p>
+  {% endif %}
+
+</section>
+{% endif %}

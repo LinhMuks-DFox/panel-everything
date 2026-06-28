@@ -1,12 +1,12 @@
 ---
 id: TASK-010
 title: "Azure/GPU 专用表 schema"
-status: todo
+status: done
 priority: P1
 architecture: ARCH-002
 dependencies: [TASK-002]
 estimated_effort: S
-executed_by:
+executed_by: claude-sonnet-4-6
 created: 2026-06-28
 updated: 2026-06-28
 ---

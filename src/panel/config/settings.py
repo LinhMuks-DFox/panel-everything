@@ -50,9 +50,25 @@ class Settings(BaseSettings):
 
     # --- Azure (optional; disabled if not set) ---
     # Store path to a file containing the Azure client secret, not the secret itself.
+    # (ARCH-001 credential-by-path convention: the secret value never lives in env/DB.)
     azure_tenant_id: str = ""
     azure_client_id: str = ""
     azure_client_secret_file: str = ""  # path: /secrets/azure_client_secret
+    azure_subscription_id: str = ""
+
+    @property
+    def azure_configured(self) -> bool:
+        """True iff all four Azure Service Principal fields are present.
+
+        AzureVmCollector is disabled (register() skips with a warning) unless this
+        is True. azure_client_secret_file is a *path*; its content is read lazily.
+        """
+        return bool(
+            self.azure_tenant_id
+            and self.azure_client_id
+            and self.azure_client_secret_file
+            and self.azure_subscription_id
+        )
 
     # --- Tailscale (optional) ---
     tailscale_socket: str = "/var/run/tailscale/tailscaled.sock"

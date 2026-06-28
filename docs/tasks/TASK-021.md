@@ -1,12 +1,12 @@
 ---
 id: TASK-021
 title: "Tailscale REST API"
-status: todo
+status: done
 priority: P1
 architecture: ARCH-003
 dependencies: [TASK-020]
 estimated_effort: S
-executed_by:
+executed_by: claude-sonnet-4-6
 created: 2026-06-28
 updated: 2026-06-28
 ---

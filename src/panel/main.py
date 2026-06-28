@@ -21,6 +21,7 @@ from fastapi import FastAPI
 
 from panel.api import health
 from panel.api.azure import router as azure_router
+from panel.api.tailscale.routes import router as tailscale_router
 from panel.collectors import register_collectors
 from panel.collectors.scheduler import build_scheduler
 from panel.config.scrub import setup_logging
@@ -69,9 +70,9 @@ async def lifespan(app: FastAPI):  # noqa: ANN201 (asynccontextmanager 推断返
     # --- TASK-011: GpuRepository 初始化(ARCH-002 专用表) ---
     app.state.gpu_repo = GpuRepository(conn)
 
-    # --- TASK-003: 采集器注册 + scheduler 启停 ---
-    # 先集中注册各模块采集器(本期为空占位),再读 registry 装配调度。
-    register_collectors(settings, app.state.repo)
+    # --- TASK-003 / TASK-012: 采集器注册 + scheduler 启停 ---
+    # 先集中注册各模块采集器(azure/gpu/...,各工厂按配置自行启停),再读 registry 装配调度。
+    register_collectors(settings, app.state.repo, app.state.gpu_repo)
     scheduler = build_scheduler(app.state.repo)
     scheduler.start()
     app.state.scheduler = scheduler
@@ -115,7 +116,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(web_routes.router)          # TASK-004: SSR GET /
     app.include_router(azure_router)               # TASK-011: /api/v1/servers
-    # ARCH-003/004: 各模块在此集中 include_router(...)。
+    app.include_router(tailscale_router)           # TASK-021: /api/tailscale
+    # ARCH-004: 各模块在此集中 include_router(...)。
 
     return app
 

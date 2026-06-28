@@ -1,7 +1,7 @@
 ---
 id: TASK-020
 title: "Tailscale 采集器 + 数据库表 + 在线判定逻辑"
-status: review
+status: done
 priority: P1
 architecture: ARCH-003
 dependencies: [TASK-003]

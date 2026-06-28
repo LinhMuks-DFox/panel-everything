@@ -1,7 +1,7 @@
 ---
 id: ARCH-003
 title: "Tailscale 网络监控"
-status: draft
+status: approved
 requirements: [REQ-003]
 author: Architect
 created: 2026-06-28

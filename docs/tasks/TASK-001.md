@@ -1,7 +1,7 @@
 ---
 id: TASK-001
 title: "项目骨架 + Dockerfile + compose + /healthz(声明全量依赖)"
-status: review
+status: done
 priority: P0
 architecture: ARCH-001
 dependencies: []

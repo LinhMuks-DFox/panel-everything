@@ -1,7 +1,7 @@
 ---
 id: ARCH-001
 title: "总体架构与基础设施"
-status: draft
+status: approved
 requirements: [REQ-001]
 author: Architect
 created: 2026-06-28

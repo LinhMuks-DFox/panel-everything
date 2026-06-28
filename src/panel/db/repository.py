@@ -275,6 +275,21 @@ class Repository:
             row = await cur.fetchone()
         return _parse_utc(row["ran_at"]) if row is not None else None
 
+    async def get_last_run(self, collector: str) -> CollectorRunRow | None:
+        """某 collector 最近一次运行(任意 status);无则 None。供单模块 /status 端点使用。"""
+        async with self._conn.execute(
+            """
+            SELECT collector, status, sample_count, duration_ms, error, ran_at
+            FROM collector_run
+            WHERE collector = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (collector,),
+        ) as cur:
+            row = await cur.fetchone()
+        return self._to_run(row) if row is not None else None
+
     async def get_all_last_runs(self) -> list[CollectorRunRow]:
         """每个 collector 的最近一次运行(任意 status),供数据源状态条渲染。"""
         async with self._conn.execute(

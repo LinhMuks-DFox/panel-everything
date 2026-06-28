@@ -19,12 +19,27 @@ from pathlib import Path
 import httpx
 import pytest
 
+from panel.collectors import registry
 from panel.config.settings import Settings
 from panel.main import create_app
 
 # --------------------------------------------------------------------------- #
 # Fixtures
 # --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _clean_registry():
+    """每个用例前后清空进程级 collector 注册表。
+
+    client fixture 每用例都进入一次 app lifespan,而 lifespan 内
+    register_collectors 会注册始终启用的 collector(如 gpu)。注册表是进程级
+    全局字典,不在用例间复位会触发「collector already registered」。沿用
+    test_collectors / test_azure_collector 的清理约定。
+    """
+    registry.clear()
+    yield
+    registry.clear()
 
 _SERVER_PAYLOAD = {
     "name": "gpu-vm-01",

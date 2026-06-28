@@ -35,7 +35,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SOCKET_PATH_DEFAULT = "/var/run/tailscale/tailscaled.sock"
-LOCALAPI_BASE = "http://local-tailscaled"  # Host 仅用于 HTTP 格式合法性
+# tailscaled localapi 要求 Host 为 "local-tailscaled.sock" (注意 .sock 后缀),否则
+# 返回 "invalid localapi request"。同时 1.50+ 起需带 Sec-Tailscale: localapi 头
+# (localapi CSRF/嗅探防护),缺失会被拒。两者必须同时满足才能拿到 200。
+LOCALAPI_HOST = "local-tailscaled.sock"
+LOCALAPI_BASE = f"http://{LOCALAPI_HOST}"
+LOCALAPI_HEADERS = {"Sec-Tailscale": "localapi"}
 
 
 def determine_online_state(
@@ -128,7 +133,10 @@ class TailscaleCollector:
         connector = aiohttp.UnixConnector(path=self._socket_path)
         timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-            resp = await session.get(f"{LOCALAPI_BASE}/localapi/v0/status")
+            resp = await session.get(
+                f"{LOCALAPI_BASE}/localapi/v0/status",
+                headers=LOCALAPI_HEADERS,
+            )
             resp.raise_for_status()
             text = await resp.text()
             return json.loads(text)  # type: ignore[return-value]

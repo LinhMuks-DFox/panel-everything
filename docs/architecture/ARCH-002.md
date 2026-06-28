@@ -1,7 +1,7 @@
 ---
 id: ARCH-002
 title: "Azure VM + GPU 监控"
-status: draft
+status: approved
 requirements: [REQ-002]
 author: Architect
 created: 2026-06-28

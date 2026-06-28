@@ -1,0 +1,10 @@
+[
+  {
+    "name": "gpu-vm-01",
+    "instance_view": {
+      "statuses": [
+        {"code": "ProvisioningState/succeeded", "display_status": "Provisioning succeeded"}
+      ]
+    }
+  }
+]
