@@ -31,6 +31,11 @@ CREATE TABLE IF NOT EXISTS metric_history (
 );
 CREATE INDEX IF NOT EXISTS idx_history_query
     ON metric_history (collector, target_id, metric, collected_at);
+-- TASK-040 retention 支撑:独立 collected_at 索引,使每日
+-- `DELETE FROM metric_history WHERE collected_at < ?` 走区间 seek 而非全表 SCAN
+-- (idx_history_query 前导列是 collector,无法服务仅含 collected_at 的范围条件)。
+CREATE INDEX IF NOT EXISTS idx_history_collected
+    ON metric_history (collected_at);
 
 -- collector_run — 采集运行可观测(每次运行一行,append)
 CREATE TABLE IF NOT EXISTS collector_run (
@@ -97,6 +102,11 @@ CREATE INDEX IF NOT EXISTS idx_gpu_metrics_query
     ON gpu_metrics(server_id, gpu_index, collected_at);
 CREATE INDEX IF NOT EXISTS idx_gpu_metrics_server_latest
     ON gpu_metrics(server_id, collected_at DESC);
+-- TASK-016 降采样支撑:独立 collected_at 索引,使 5min job 的聚合(collected_at
+-- 区间)与 48h 边界删除走 range seek 而非全表 SCAN(上面两个索引前导列均为
+-- server_id,无法服务仅含 collected_at 的范围条件)。
+CREATE INDEX IF NOT EXISTS idx_gpu_metrics_collected
+    ON gpu_metrics(collected_at);
 
 -- gpu_metrics_5m — GPU 5 分钟降采样(MS-003 / TASK-016 填充,本期提前建好)
 CREATE TABLE IF NOT EXISTS gpu_metrics_5m (

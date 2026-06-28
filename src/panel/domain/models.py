@@ -264,6 +264,10 @@ class AiProviderStatus(PublicModel):
     metric_unit: str               # 'requests' | 'tokens' | 'unknown'
     resets_at: str | None          # ISO8601 UTC
     window_label: str              # 如 '5h 窗口'
+    # 次级(周)限额:Codex 上报 secondary_used_percent / secondary_resets_at。
+    # 无次级窗口的 provider 两者均为 None,卡片侧据此条件渲染。
+    secondary_used_percent: float | None = None
+    secondary_resets_at: str | None = None
     stale: bool
     stale_since: str | None        # collected_at ISO8601,stale=True 时填
     stale_age_label: str | None    # 如 '2h 15m',stale=True 时填(后端预算)

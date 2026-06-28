@@ -156,18 +156,21 @@ def _ai_status_class(p: Any) -> str:  # noqa: ANN401 — p is AiProviderStatus a
 def _ai_status_symbol(p: Any) -> str:  # noqa: ANN401
     """Return the Unicode shape symbol for an AiProviderStatus.
 
-    ● ok/error(>90)   ◐ warn(>70)   ○ stale   ◌ no_data
-    (error is rendered ● — red is ignored on e-ink but the symbol still reads
-    as "filled / at-limit"; stale uses ○ to distinguish from a healthy fill.)
+    ● ok   ◐ warn(>70)   ○ error(>90)   ◌ stale / no_data
+
+    Shape alone distinguishes ok (●) from error (○) so the most critical
+    healthy-vs-at-limit signal survives on grayscale e-ink where colour is
+    ignored. Mirrors _datasource_status.html (ok ●, error ○, stale ◌) for a
+    consistent三层编码 (色+形+文) across modules.
     """
     match _ai_status_class(p):
-        case "ok" | "error":
+        case "ok":
             return "●"
         case "warn":
             return "◐"
-        case "stale":
+        case "error":
             return "○"
-        case _:
+        case _:  # stale / nodata
             return "◌"
 
 

@@ -76,6 +76,11 @@
 
         if (newGrid && currentGrid) {
           currentGrid.innerHTML = newGrid.innerHTML;
+          // Full-page SSR refresh injects fresh .gpu-trend details that have no
+          // toggle listener yet; rebind them (idempotent — GPU 趋势重绑).
+          if (typeof window.gpuTrendBindAll === "function") {
+            window.gpuTrendBindAll();
+          }
         }
       })
       .catch(function () {
@@ -361,6 +366,18 @@
       if (meta.length) {
         html += '<div class="gpu-meta-row">' + meta.map(escHtml).join('<span>') + '</div>';
       }
+
+      // GPU 历史趋势迷你图 — must mirror _vm_card.html L113-123 so the 45s Azure
+      // JSON poll rebuild does NOT drop the trend <details>. The block is rebound
+      // after every re-render via window.gpuTrendBindAll() (idempotent).
+      html += '<details class="gpu-trend" data-server-id="' + escHtml(String(gpu.server_id)) +
+        '" data-gpu-index="' + escHtml(String(gpu.gpu_index)) + '">';
+      html += '<summary class="gpu-trend-toggle">历史趋势</summary>';
+      html += '<div class="gpu-trend-chart">';
+      html += '<p class="gpu-trend-status" role="status">展开以加载历史数据</p>';
+      html += '<canvas class="trend-canvas" width="280" height="60" aria-label="GPU ' +
+        escHtml(String(gpu.gpu_index)) + ' 利用率趋势图"></canvas>';
+      html += '</div></details>';
     } else {
       html += '<div class="gpu-unreachable"><span class="status-dot status-error" aria-hidden="true">○</span> 不可达</div>';
     }
@@ -438,6 +455,12 @@
       if (!seenIds[allCards[j].dataset.serverId]) {
         section.removeChild(allCards[j]);
       }
+    }
+
+    // Re-bind GPU trend toggles on freshly built/replaced cards (GPU 趋势重绑).
+    // Without this the rebuilt .gpu-trend details have no toggle listener.
+    if (typeof window.gpuTrendBindAll === "function") {
+      window.gpuTrendBindAll();
     }
   }
 
@@ -803,6 +826,9 @@
 
   // 暴露绘制函数供测试与潜在复用（不影响 IIFE 封装的其余内部状态）。
   window.gpuTrendDrawMiniChart = gpuTrendDrawMiniChart;
+  // 暴露幂等重绑函数：每条轮询路径（Azure JSON 重建 / 整页 innerHTML 替换）
+  // 在 DOM 变更后调用一次，使动态插入的 .gpu-trend 也拿到 toggle 监听。
+  window.gpuTrendBindAll = gpuTrendBindAll;
 
   // ── Bootstrap ─────────────────────────────────────────────────────────
   gpuTrendBindAll();

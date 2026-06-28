@@ -296,6 +296,49 @@ async def test_1h_downsample_from_5m_buckets(db_repos):
 # ---------------------------------------------------------------------------
 
 
+async def test_5m_downsample_multi_card_batch_persists_all(db_repos):
+    """一轮多卡降采样:批量 upsert 后两张卡的桶都正确落库(MS-005 #10 批量写)。"""
+    conn, gpu_repo = db_repos
+    srv_id = await gpu_repo.insert_server(ServerIn(name="g-multi", has_gpu=True))
+    now = datetime(2026, 6, 28, 12, 7, 0, tzinfo=UTC)
+    bucket = datetime(2026, 6, 28, 12, 0, 0, tzinfo=UTC)
+
+    await gpu_repo.append_gpu_metrics([
+        _sample(srv_id, 0, util=20.0, mem_used=2000.0, mem_total=10000.0,
+                temp=50.0, power=100.0, at=bucket + timedelta(seconds=10)),
+        _sample(srv_id, 1, util=80.0, mem_used=8000.0, mem_total=10000.0,
+                temp=75.0, power=250.0, at=bucket + timedelta(seconds=10)),
+    ])
+
+    await run_5m_downsample(gpu_repo, now=now)
+
+    r0 = await gpu_repo.get_gpu_history_5m(srv_id, 0, since=bucket - timedelta(hours=1))
+    r1 = await gpu_repo.get_gpu_history_5m(srv_id, 1, since=bucket - timedelta(hours=1))
+    assert len(r0) == 1 and r0[0].avg_util_pct == pytest.approx(20.0)
+    assert len(r1) == 1 and r1[0].avg_util_pct == pytest.approx(80.0)
+
+
+async def test_upsert_5m_buckets_batch(db_repos):
+    """批量 upsert_5m_buckets:多桶一次写入,空列表无副作用。"""
+    conn, gpu_repo = db_repos
+    srv_id = await gpu_repo.insert_server(ServerIn(name="g-batch", has_gpu=True))
+    b = datetime(2026, 6, 28, 12, 0, 0, tzinfo=UTC).isoformat()
+
+    # 空列表:不抛、不写
+    await gpu_repo.upsert_5m_buckets([])
+
+    await gpu_repo.upsert_5m_buckets([
+        GpuBucketRow(server_id=srv_id, gpu_index=0, avg_util_pct=11.0, avg_mem_pct=11.0,
+                     max_temp_c=11.0, max_power_w=11.0, sample_count=1, bucket_start=b),
+        GpuBucketRow(server_id=srv_id, gpu_index=1, avg_util_pct=22.0, avg_mem_pct=22.0,
+                     max_temp_c=22.0, max_power_w=22.0, sample_count=2, bucket_start=b),
+    ])
+
+    since = datetime(2026, 6, 28, tzinfo=UTC)
+    assert (await gpu_repo.get_gpu_history_5m(srv_id, 0, since=since))[0].sample_count == 1
+    assert (await gpu_repo.get_gpu_history_5m(srv_id, 1, since=since))[0].sample_count == 2
+
+
 async def test_upsert_5m_bucket_idempotent(db_repos):
     conn, gpu_repo = db_repos
     srv_id = await gpu_repo.insert_server(ServerIn(name="g7", has_gpu=True))

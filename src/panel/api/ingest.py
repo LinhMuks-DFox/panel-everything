@@ -10,6 +10,8 @@ target_id = ai_provider.id）。
 
 from __future__ import annotations
 
+import secrets
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -31,8 +33,13 @@ def _check_auth(settings: Settings, authorization: str | None) -> None:
     token = settings.ingest_token
     if not token:
         return
-    expected = f"Bearer {token}"
-    if authorization != expected:
+    # 分离 scheme 与凭证后对凭证做恒定时间比较,避免普通 != 的时序侧信道
+    # (Python str != 在首个不同字符即短路返回)。secrets.compare_digest 对等长
+    # 输入恒定时间,对不等长立即返回但不泄漏内容。
+    provided = ""
+    if authorization and authorization.startswith("Bearer "):
+        provided = authorization[len("Bearer ") :]
+    if not secrets.compare_digest(provided, token):
         raise HTTPException(status_code=403, detail="invalid or missing ingest token")
 
 

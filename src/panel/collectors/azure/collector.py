@@ -249,9 +249,9 @@ class AzureVmCollector:
         return samples
 
     async def _resolve_public_ip(self, vm: Any) -> str | None:
-        """解析 VM 当前关联的公网 IP 地址;失败返回 None(记 debug 日志,不抛)。
+        """解析 VM primary NIC 关联的公网 IP 地址;失败返回 None(记 debug 日志,不抛)。
 
-        链路:VM.network_profile.network_interfaces[0].id → NIC →
+        链路:VM.network_profile.network_interfaces(primary 优先)→ NIC →
         ip_configurations[*].public_ip_address.id → public IP 资源 → .ip_address。
 
         同步 SDK 调用统一放进 asyncio.to_thread,避免阻塞 event loop。
@@ -276,13 +276,22 @@ class AzureVmCollector:
 
     @staticmethod
     def _first_nic_id(vm: Any) -> str | None:
-        """从 VM.network_profile.network_interfaces 取第一个 NIC 的资源 id。"""
+        """取 VM 的 primary NIC 资源 id;Azure 不保证 primary 排在首位。
+
+        多 NIC VM 的公网 IP 通常只挂在 primary NIC 上,而
+        network_profile.network_interfaces 数组顺序不保证 primary 在前。
+        优先返回标记 primary 的 NIC;若无任何 NIC 标记 primary(如单 NIC VM
+        常省略该标志),回退到第一个 NIC,保持向后兼容。
+        """
         network_profile = _get(vm, "network_profile")
         if network_profile is None:
             return None
         nics = _get(network_profile, "network_interfaces")
         if not nics:
             return None
+        for nic_ref in nics:
+            if _get(nic_ref, "primary"):
+                return _get(nic_ref, "id")
         return _get(nics[0], "id")
 
     def _fetch_public_ip_sync(self, nic_id: str) -> str | None:

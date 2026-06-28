@@ -119,13 +119,21 @@ async def test_ai_provider_init(tmp_path: Path) -> None:
         await ctx.__aexit__(None, None, None)
 
 
-async def test_ai_provider_id_lookup(client: httpx.AsyncClient) -> None:
-    """get_ai_provider_id: 已知 provider 返回 int, 未知返回 None。"""
-    # client fixture already entered lifespan; reach repo through a fresh app is
-    # awkward, so exercise via the ingest endpoint instead — covered elsewhere.
-    # Here we just assert the endpoint resolves a known provider (200).
-    resp = await client.post("/api/ingest/ai-usage", json=_codex_payload())
-    assert resp.status_code == 200
+async def test_ai_provider_id_lookup(tmp_path: Path) -> None:
+    """get_ai_provider_id: 已知 provider 返回 int, 未知返回 None。
+
+    直接调用 repo 层方法以真正验证 lookup 的两个分支(已知→int / 未知→None),
+    而不是仅断言端点 200(那条已被 test_ingest_ai_usage_ok 覆盖)。
+    """
+    ctx = _make_client(tmp_path)
+    await ctx.__aenter__()
+    try:
+        repo = ctx.app.state.repo
+        known = await repo.get_ai_provider_id("codex")
+        assert isinstance(known, int)
+        assert await repo.get_ai_provider_id("nope") is None
+    finally:
+        await ctx.__aexit__(None, None, None)
 
 
 # --------------------------------------------------------------------------- #
@@ -219,6 +227,33 @@ async def test_ingest_ai_usage_token_auth(tmp_path: Path) -> None:
         )
         assert resp.status_code == 200
         assert resp.json() == {"ok": True, "stored": 6}
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+
+async def test_ingest_auth_precedes_provider_resolution(tmp_path: Path) -> None:
+    """未授权 + 未知 provider → 仍 403(不泄露 provider 是否存在)。
+
+    锁定鉴权早于 provider 解析:若有人把 provider 校验提前到 _check_auth 之前,
+    未授权调用未知 provider 会返回 400(泄露其不存在)而非 403,此测试即变红。
+    """
+    ctx = _make_client(tmp_path, ingest_token="s3cr3t")  # noqa: S106
+    c = await ctx.__aenter__()
+    try:
+        payload = _codex_payload()
+        payload["provider"] = "foobar"  # 未知 provider
+
+        # 无 token + 未知 provider → 必须 403(而非 400)
+        resp = await c.post("/api/ingest/ai-usage", json=payload)
+        assert resp.status_code == 403
+
+        # 错误 token + 未知 provider → 同样 403
+        resp = await c.post(
+            "/api/ingest/ai-usage",
+            json=payload,
+            headers={"Authorization": "Bearer wrong"},
+        )
+        assert resp.status_code == 403
     finally:
         await ctx.__aexit__(None, None, None)
 

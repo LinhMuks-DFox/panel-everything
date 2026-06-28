@@ -81,23 +81,23 @@ async def run_5m_downsample(
     bucket_end = bucket_start + FIVE_MIN
 
     rows = await gpu_repo.aggregate_raw_buckets(bucket_start, bucket_end)
-    written = 0
-    for server_id, gpu_index, avg_util, avg_mem, max_temp, max_power, count in rows:
-        if count == 0:
-            continue
-        await gpu_repo.upsert_5m_bucket(
-            GpuBucketRow(
-                server_id=server_id,
-                gpu_index=gpu_index,
-                avg_util_pct=_round(avg_util),
-                avg_mem_pct=_round(avg_mem),
-                max_temp_c=_round(max_temp),
-                max_power_w=_round(max_power),
-                sample_count=count,
-                bucket_start=_iso(bucket_start),
-            )
+    buckets = [
+        GpuBucketRow(
+            server_id=server_id,
+            gpu_index=gpu_index,
+            avg_util_pct=_round(avg_util),
+            avg_mem_pct=_round(avg_mem),
+            max_temp_c=_round(max_temp),
+            max_power_w=_round(max_power),
+            sample_count=count,
+            bucket_start=_iso(bucket_start),
         )
-        written += 1
+        for server_id, gpu_index, avg_util, avg_mem, max_temp, max_power, count in rows
+        if count
+    ]
+    # 一轮多桶合并为单次 executemany + 单次 commit(避免逐桶提交写放大)。
+    await gpu_repo.upsert_5m_buckets(buckets)
+    written = len(buckets)
 
     # 保留清理:原始表 48h、5m 表 30 天
     raw_deleted = await gpu_repo.delete_raw_metrics_before(now - RAW_RETENTION)
@@ -131,23 +131,22 @@ async def run_1h_downsample(
     bucket_end = bucket_start + ONE_HOUR
 
     rows = await gpu_repo.aggregate_5m_buckets(bucket_start, bucket_end)
-    written = 0
-    for server_id, gpu_index, avg_util, avg_mem, max_temp, max_power, count in rows:
-        if count == 0:
-            continue
-        await gpu_repo.upsert_1h_bucket(
-            GpuBucketRow(
-                server_id=server_id,
-                gpu_index=gpu_index,
-                avg_util_pct=_round(avg_util),
-                avg_mem_pct=_round(avg_mem),
-                max_temp_c=_round(max_temp),
-                max_power_w=_round(max_power),
-                sample_count=count,
-                bucket_start=_iso(bucket_start),
-            )
+    buckets = [
+        GpuBucketRow(
+            server_id=server_id,
+            gpu_index=gpu_index,
+            avg_util_pct=_round(avg_util),
+            avg_mem_pct=_round(avg_mem),
+            max_temp_c=_round(max_temp),
+            max_power_w=_round(max_power),
+            sample_count=count,
+            bucket_start=_iso(bucket_start),
         )
-        written += 1
+        for server_id, gpu_index, avg_util, avg_mem, max_temp, max_power, count in rows
+        if count
+    ]
+    await gpu_repo.upsert_1h_buckets(buckets)
+    written = len(buckets)
 
     logger.info(
         "run_1h_downsample: bucket=%s wrote=%d",

@@ -35,6 +35,10 @@ from panel.domain.models import ServerIn
 # Azure 资源 id 模板
 _SUB = "/subscriptions/sub-123"
 _NIC_ID = f"{_SUB}/resourceGroups/rg-gpu/providers/Microsoft.Network/networkInterfaces/nic-01"
+# 第二块(primary)NIC 的资源 id,用于多 NIC primary-preference 测试
+_NIC_ID_PRIMARY = (
+    f"{_SUB}/resourceGroups/rg-gpu/providers/Microsoft.Network/networkInterfaces/nic-primary"
+)
 _PIP_ID = f"{_SUB}/resourceGroups/rg-gpu/providers/Microsoft.Network/publicIPAddresses/pip-01"
 
 
@@ -197,6 +201,45 @@ async def test_resolves_public_ip_sdk_attribute_form(gpu_repo, base_repo):
     samples = await collector.collect()
     by_metric = {s.metric: s for s in samples}
     assert by_metric["public_ip"].value_text == "13.14.15.16"
+
+
+async def test_prefers_primary_nic_when_not_first(gpu_repo, base_repo):
+    """多 NIC 且 primary 不在首位 → 解析 primary NIC(而非 nics[0])的 IP。"""
+    await _register_server(gpu_repo, "gpu-vm-01", "gpu-vm-01")
+    # nics[0] 非 primary(若错误地取首个,会查到 nic-01 而非 nic-primary)。
+    vm = {
+        "name": "gpu-vm-01",
+        "instance_view": {"statuses": [{"code": "PowerState/running"}]},
+        "network_profile": {
+            "network_interfaces": [
+                {"id": _NIC_ID, "primary": False},
+                {"id": _NIC_ID_PRIMARY, "primary": True},
+            ]
+        },
+    }
+    nic = {"ip_configurations": [{"public_ip_address": {"id": _PIP_ID}}]}
+    net = FakeNetworkClient(nic=nic, public_ip={"ip_address": "5.6.7.8"})
+    collector = _make_collector(gpu_repo, base_repo, [vm], net)
+
+    samples = await collector.collect()
+    by_metric = {s.metric: s for s in samples}
+    assert by_metric["public_ip"].value_text == "5.6.7.8"
+    # 关键断言:SDK 用 primary NIC 的名字查询,而不是数组首个 NIC。
+    assert net.network_interfaces.calls == [("rg-gpu", "nic-primary")]
+
+
+async def test_falls_back_to_first_nic_when_no_primary_flag(gpu_repo, base_repo):
+    """无任何 NIC 标记 primary(单 NIC 常省略该标志)→ 回退到第一个 NIC。"""
+    await _register_server(gpu_repo, "gpu-vm-01", "gpu-vm-01")
+    nic = {"ip_configurations": [{"public_ip_address": {"id": _PIP_ID}}]}
+    net = FakeNetworkClient(nic=nic, public_ip={"ip_address": "1.1.1.1"})
+    # _vm_running_with_nic 的 NIC 不带 primary 标志 → 走回退分支。
+    collector = _make_collector(gpu_repo, base_repo, [_vm_running_with_nic()], net)
+
+    samples = await collector.collect()
+    by_metric = {s.metric: s for s in samples}
+    assert by_metric["public_ip"].value_text == "1.1.1.1"
+    assert net.network_interfaces.calls == [("rg-gpu", "nic-01")]
 
 
 async def test_skips_ip_config_without_public_ip_then_uses_next(gpu_repo, base_repo):

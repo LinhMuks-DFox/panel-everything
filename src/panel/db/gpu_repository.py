@@ -391,6 +391,46 @@ class GpuRepository:
         """按 (server_id, gpu_index, bucket_start) UPSERT 一个 1h 降采样桶。"""
         await self._upsert_bucket("gpu_metrics_1h", row)
 
+    async def upsert_5m_buckets(self, rows: list[GpuBucketRow]) -> None:
+        """批量 UPSERT 一轮 5min 降采样桶,单次 executemany + 单次 commit。"""
+        await self._upsert_buckets("gpu_metrics_5m", rows)
+
+    async def upsert_1h_buckets(self, rows: list[GpuBucketRow]) -> None:
+        """批量 UPSERT 一轮 1h 降采样桶,单次 executemany + 单次 commit。"""
+        await self._upsert_buckets("gpu_metrics_1h", rows)
+
+    async def _upsert_buckets(self, table: str, rows: list[GpuBucketRow]) -> None:
+        """批量 INSERT OR REPLACE,与 append_gpu_metrics 的批量写策略对齐。
+
+        把一轮降采样的多桶写合并为一次 executemany + 一次 commit,避免逐桶提交
+        在共享连接上产生写放大(评审 async-perf 修复)。table 仅取自模块内常量,
+        无注入面。空列表直接返回(不开事务)。
+        """
+        if not rows:
+            return
+        await self._conn.executemany(
+            f"""
+            INSERT OR REPLACE INTO {table}
+                (server_id, gpu_index, avg_util_pct, avg_mem_pct,
+                 max_temp_c, max_power_w, sample_count, bucket_start)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,  # noqa: S608
+            [
+                (
+                    r.server_id,
+                    r.gpu_index,
+                    r.avg_util_pct,
+                    r.avg_mem_pct,
+                    r.max_temp_c,
+                    r.max_power_w,
+                    r.sample_count,
+                    r.bucket_start,
+                )
+                for r in rows
+            ],
+        )
+        await self._conn.commit()
+
     async def _upsert_bucket(self, table: str, row: GpuBucketRow) -> None:
         """两张降采样表共用的 INSERT OR REPLACE 实现。
 

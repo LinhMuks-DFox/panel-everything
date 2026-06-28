@@ -79,12 +79,18 @@ async def lifespan(app: FastAPI):  # noqa: ANN201 (asynccontextmanager 推断返
     register_collectors(settings, app.state.repo, app.state.gpu_repo)
     scheduler = build_scheduler(app.state.repo)
     # --- TASK-016: GPU 历史降采样 job(5min / 1h) ---
+    # 显式 max_instances=1 + coalesce=True,与 build_scheduler 的 collector job
+    # 约定一致(不依赖 APScheduler 隐式默认);放宽 misfire_grace_time 以容忍事件
+    # 循环在到期时刻恰好繁忙(如正在跑一轮 GPU SSH 采集)导致的短时 misfire。
     scheduler.add_job(
         run_5m_downsample,
         "interval",
         minutes=5,
         args=[app.state.gpu_repo],
         id="gpu_downsample_5m",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=60,
     )
     scheduler.add_job(
         run_1h_downsample,
@@ -92,6 +98,9 @@ async def lifespan(app: FastAPI):  # noqa: ANN201 (asynccontextmanager 推断返
         hours=1,
         args=[app.state.gpu_repo],
         id="gpu_downsample_1h",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
     )
     # --- TASK-040: 通用 metric_history retention job(每日) ---
     scheduler.add_job(
@@ -100,6 +109,9 @@ async def lifespan(app: FastAPI):  # noqa: ANN201 (asynccontextmanager 推断返
         days=1,
         args=[app.state.repo, settings.history_retention_days],
         id="metric_history_retention",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
     )
     scheduler.start()
     app.state.scheduler = scheduler

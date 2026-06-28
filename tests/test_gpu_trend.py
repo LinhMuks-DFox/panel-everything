@@ -501,3 +501,159 @@ def test_draw_mini_chart_colour_mode_uses_threshold_colour():
     out = _run_harness(pts, eink=False)
     assert out["result"] is True
     assert out["strokeStyle"] == "#c62828"
+
+
+# --------------------------------------------------------------------------- #
+# 5. 轮询重渲染回归（MS-005 评审 HIGH #1 / #18）
+#
+# Azure JSON 轮询用 buildGpuCardHtml 整卡重建 .vm-card，且整页 refreshDashboard
+# 用 innerHTML 替换 #panel-grid——两条路径都会引入新的 .gpu-trend。回归点：
+#   (a) buildGpuCardHtml 必须输出与 SSR 等价的 .gpu-trend/<canvas> 趋势块，
+#       否则首次 45s 轮询后趋势块从 DOM 永久消失。
+#   (b) window.gpuTrendBindAll 必须被暴露，且两条轮询路径在 DOM 变更后各调用
+#       一次，否则新插入的 .gpu-trend 拿不到 toggle 监听（展开无反应）。
+# --------------------------------------------------------------------------- #
+
+
+def _azure_js_segment() -> str:
+    """TASK-015 Azure 轮询段（含 buildGpuCardHtml / renderAzureDashboard）。"""
+    js = _read_js()
+    start = js.find("TASK-015")
+    end = js.find("TASK-033")  # Azure 段止于 AI 段开始
+    assert start != -1 and end != -1 and start < end
+    return js[start:end]
+
+
+def test_build_gpu_card_emits_trend_block_source():
+    """buildGpuCardHtml 源码含 .gpu-trend / trend-canvas / data-server-id（修复 a）。
+
+    旧实现完全没有趋势块标记，本断言会变红——锁定 Azure 轮询重建不再丢失趋势。
+    """
+    seg = _azure_js_segment()
+    # 定位 buildGpuCardHtml 函数体
+    idx = seg.find("function buildGpuCardHtml")
+    assert idx != -1
+    body = seg[idx:]
+    assert 'class="gpu-trend' in body
+    assert "trend-canvas" in body
+    assert "data-server-id" in body
+    assert "gpu.gpu_index" in body
+    assert "gpu.server_id" in body
+
+
+def test_poll_paths_rebind_gpu_trend_source():
+    """window.gpuTrendBindAll 被暴露，且两条轮询路径在 DOM 变更后调用它（修复 b）。"""
+    js = _read_js()
+    # 暴露 rebind 函数
+    assert "window.gpuTrendBindAll = gpuTrendBindAll;" in js
+    # renderAzureDashboard 末尾调用一次
+    azure_seg = _azure_js_segment()
+    ra_idx = azure_seg.find("function renderAzureDashboard")
+    assert ra_idx != -1
+    assert "window.gpuTrendBindAll()" in azure_seg[ra_idx:]
+    # 外层 refreshDashboard innerHTML 替换后调用一次
+    outer = js[: js.find("TASK-022")]
+    rd_idx = outer.find("function refreshDashboard")
+    assert rd_idx != -1
+    assert "currentGrid.innerHTML = newGrid.innerHTML;" in outer[rd_idx:]
+    assert "window.gpuTrendBindAll()" in outer[rd_idx:]
+
+
+# ── 运行时：在 node 下真实执行 buildGpuCardHtml，断言趋势块被拼出 ───────────
+
+_BUILD_HARNESS_TEMPLATE = r"""
+'use strict';
+%FUNCS%
+const gpu = %GPU%;
+const html = buildGpuCardHtml(gpu);
+console.log(JSON.stringify({ html: html }));
+"""
+
+
+def _extract_named_funcs(segment: str, names: list[str]) -> str:
+    """按名从 segment 抽取若干 function 定义源码（花括号配平）。"""
+    out = []
+    for name in names:
+        m = re.search(r"(function " + re.escape(name) + r"\s*\([^)]*\)\s*\{)", segment)
+        assert m, f"未能在 panel.js 中定位 {name}"
+        start = m.start()
+        depth = 0
+        i = m.end(1) - 1
+        while i < len(segment):
+            ch = segment[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    out.append(segment[start : i + 1])
+                    break
+            i += 1
+        else:  # pragma: no cover - 防御
+            raise AssertionError(f"{name} 花括号未配平")
+    return "\n".join(out)
+
+
+def _run_build_gpu_card(gpu: dict) -> str:
+    """在 node 下执行真实 buildGpuCardHtml(gpu)，返回拼出的 HTML 字符串。"""
+    seg = _azure_js_segment()
+    funcs = _extract_named_funcs(
+        seg,
+        [
+            "escHtml",
+            "round1",
+            "utilThresholdClass",
+            "memThresholdClass",
+            "buildGpuCardHtml",
+        ],
+    )
+    harness = _BUILD_HARNESS_TEMPLATE.replace("%FUNCS%", funcs).replace(
+        "%GPU%", json.dumps(gpu)
+    )
+    proc = subprocess.run(  # noqa: S603 — 本地构造脚本,_NODE 为 which 解析的绝对路径
+        [_NODE, "-e", harness],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, f"node 执行失败: {proc.stderr}"
+    return json.loads(proc.stdout.strip().splitlines()[-1])["html"]
+
+
+@pytest.mark.skipif(_NODE is None, reason="node not available")
+def test_runtime_build_gpu_card_includes_trend_block():
+    """运行时：buildGpuCardHtml 对有数据 GPU 输出含正确 data-* 的趋势块。"""
+    gpu = {
+        "server_id": 7,
+        "gpu_index": 3,
+        "gpu_name": "NVIDIA A100",
+        "util_pct": 55.0,
+        "mem_pct": 50.0,
+        "mem_used_mib": 40960.0,
+        "mem_total_mib": 81920.0,
+        "temp_c": 70.0,
+        "power_w": 300.0,
+        "is_stale": False,
+    }
+    html = _run_build_gpu_card(gpu)
+    assert 'class="gpu-trend"' in html
+    assert "trend-canvas" in html
+    assert 'data-server-id="7"' in html
+    assert 'data-gpu-index="3"' in html
+    assert "历史趋势" in html
+
+
+@pytest.mark.skipif(_NODE is None, reason="node not available")
+def test_runtime_build_gpu_card_unreachable_has_no_trend():
+    """运行时：util_pct=None 的不可达 GPU 不输出趋势块（与 SSR 一致）。"""
+    gpu = {
+        "server_id": 1,
+        "gpu_index": 0,
+        "gpu_name": None,
+        "util_pct": None,
+        "mem_pct": None,
+        "is_stale": False,
+    }
+    html = _run_build_gpu_card(gpu)
+    assert "不可达" in html
+    assert "gpu-trend" not in html

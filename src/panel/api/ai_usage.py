@@ -85,6 +85,8 @@ def _build_provider_status(
             metric_unit="unknown",
             resets_at=None,
             window_label=_window_label(window_seconds),
+            secondary_used_percent=None,
+            secondary_resets_at=None,
             stale=False,
             stale_since=None,
             stale_age_label=None,
@@ -121,6 +123,9 @@ def _build_provider_status(
 
     used_percent = num("used_percent")
     resets_at = text("resets_at")
+    # 次级(周)限额:Codex 真实 schema 额外上报 secondary_*;无则为 None。
+    secondary_used_percent = num("secondary_used_percent")
+    secondary_resets_at = text("secondary_resets_at")
 
     # 窗口秒数:provider 上报覆盖配置默认值。
     reported_window = num("window_seconds")
@@ -165,6 +170,8 @@ def _build_provider_status(
         metric_unit=metric_unit,
         resets_at=resets_at,
         window_label=_window_label(effective_window),
+        secondary_used_percent=secondary_used_percent,
+        secondary_resets_at=secondary_resets_at,
         stale=stale,
         stale_since=stale_since,
         stale_age_label=stale_age_label,

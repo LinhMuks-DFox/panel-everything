@@ -120,8 +120,33 @@ async def test_all_indexes_exist(conn: aiosqlite.Connection) -> None:
         "idx_gpu_metrics_server_latest",
         "idx_gpu_5m_bucket",
         "idx_gpu_1h_bucket",
+        # MS-005 评审修复 (#7/#8):collected_at 前导列索引,支撑 retention/降采样
+        "idx_gpu_metrics_collected",
+        "idx_history_collected",
     }
     assert expected_indexes <= names, f"缺少索引: {expected_indexes - names}"
+
+
+async def test_collected_at_indexes_serve_range_seek(
+    conn: aiosqlite.Connection,
+) -> None:
+    """新增 collected_at 索引让时间范围查询走 SEARCH 而非全表 SCAN(MS-005 #7/#8)。"""
+    async def _plan(sql: str) -> str:
+        async with conn.execute(sql, ("2026-01-01T00:00:00+00:00",)) as cur:
+            rows = [r async for r in cur]
+        return " ".join(str(r[-1]) for r in rows)
+
+    # gpu_metrics 的 48h 边界删除应命中 idx_gpu_metrics_collected
+    plan = await _plan(
+        "EXPLAIN QUERY PLAN DELETE FROM gpu_metrics WHERE collected_at < ?"
+    )
+    assert "idx_gpu_metrics_collected" in plan
+
+    # metric_history 的每日 retention 删除应命中 idx_history_collected
+    plan = await _plan(
+        "EXPLAIN QUERY PLAN DELETE FROM metric_history WHERE collected_at < ?"
+    )
+    assert "idx_history_collected" in plan
 
 
 async def test_migrate_idempotent(conn: aiosqlite.Connection) -> None:

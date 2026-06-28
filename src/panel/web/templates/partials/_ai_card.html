@@ -7,7 +7,7 @@
 
   Jinja2 globals registered in routes.py:
     ai_status_class(p)    → "ok" / "warn" / "error" / "stale" / "nodata"
-    ai_status_symbol(p)   → "●" / "◐" / "●" / "○" / "◌"
+    ai_status_symbol(p)   → "●" / "◐" / "○" / "◌" / "◌"
     ai_pct_warn(p)        → bool  (used_percent ≥ 70 且 < 90)
     ai_pct_error(p)       → bool  (used_percent ≥ 90)
 
@@ -40,7 +40,7 @@
   {# ── Stale 横幅 ─────────────────────────────────────────────────────── #}
   {% if p.stale %}
   <div class="datasource-banner ai-card__stale" role="alert">
-    <span class="status-dot status-stale" aria-hidden="true">○</span>
+    <span class="status-dot status-stale" aria-hidden="true">◌</span>
     数据可能过旧（上次更新 {{ p.stale_age_label or '—' }} 前）
   </div>
   {% endif %}
@@ -64,6 +64,27 @@
   </div>
   {% else %}
   <p class="metric-unknown">用量未知{% if p.source_type == 'manual' %}（请手动更新）{% endif %}</p>
+  {% endif %}
+
+  {# ── 周限额(次级窗口)进度条 ─────────────────────────────────────────── #}
+  {# Codex 上报 secondary_used_percent 时展示;复用主进度条样式(e-ink 安全)。 #}
+  {% if p.secondary_used_percent is not none %}
+  <div class="metric-bar-wrap ai-secondary-wrap">
+    <div class="metric-bar ai-metric-bar" role="progressbar"
+         aria-valuenow="{{ p.secondary_used_percent | round(1) }}"
+         aria-valuemin="0" aria-valuemax="100"
+         aria-label="周限额 {{ p.secondary_used_percent | round(1) }}%"
+         style="--pct: {{ p.secondary_used_percent | round(1) }}%"></div>
+    <span class="metric-bar-label ai-metric-bar-label">
+      周限额 {{ p.secondary_used_percent | round(1) }}%
+    </span>
+  </div>
+  {% if p.secondary_resets_at %}
+  <p class="resets-at resets-at--secondary">
+    周限额重置：<time datetime="{{ p.secondary_resets_at }}"
+                      data-countdown="{{ p.secondary_resets_at }}">{{ p.secondary_resets_at }}</time>
+  </p>
+  {% endif %}
   {% endif %}
 
   {# ── 窗口重置倒计时 ─────────────────────────────────────────────────── #}

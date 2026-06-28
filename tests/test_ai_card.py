@@ -151,6 +151,87 @@ async def test_get_ai_usage_stale(tmp_path: Path) -> None:
         await ctx.__aexit__(None, None, None)
 
 
+async def test_stale_uses_reported_window_override_small(tmp_path: Path) -> None:
+    """上报 window_seconds=600(10min)覆盖配置默认 18000 → 20min 数据判 stale。
+
+    配置默认 18000(2.5h 阈值)下 20min 不会 stale;此处变 stale 证明是上报窗口
+    (而非配置窗口)在驱动 stale 计算,锁定 effective_window 覆盖逻辑。
+    """
+    ctx = _make_client(tmp_path)
+    c = await ctx.__aenter__()
+    try:
+        old = _NOW - timedelta(minutes=20)
+        await c.post(
+            "/api/ingest/ai-usage",
+            json=_ai_payload(
+                reported_at=old,
+                metrics=[
+                    {"metric": "used_requests", "value_num": 5.0},
+                    {"metric": "limit_requests", "value_num": 1000.0},
+                    {"metric": "used_percent", "value_num": 0.5},
+                    {"metric": "window_seconds", "value_num": 600.0},  # 10min 窗口
+                ],
+            ),
+        )
+        usage = await c.get("/api/ai-usage")
+        codex = next(p for p in usage.json()["providers"] if p["provider"] == "codex")
+        assert codex["stale"] is True
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+
+async def test_stale_uses_reported_window_override_large(tmp_path: Path) -> None:
+    """上报 window_seconds=86400(24h)覆盖配置默认 → 20min 数据不 stale。
+
+    与 _small 配对:同样 20min 旧数据,在 24h 窗口(12h 阈值)下不 stale。两条
+    一起把『上报窗口覆盖配置窗口』的双向行为钉死。
+    """
+    ctx = _make_client(tmp_path)
+    c = await ctx.__aenter__()
+    try:
+        old = _NOW - timedelta(minutes=20)
+        await c.post(
+            "/api/ingest/ai-usage",
+            json=_ai_payload(
+                reported_at=old,
+                metrics=[
+                    {"metric": "used_requests", "value_num": 5.0},
+                    {"metric": "limit_requests", "value_num": 1000.0},
+                    {"metric": "used_percent", "value_num": 0.5},
+                    {"metric": "window_seconds", "value_num": 86400.0},  # 24h 窗口
+                ],
+            ),
+        )
+        usage = await c.get("/api/ai-usage")
+        codex = next(p for p in usage.json()["providers"] if p["provider"] == "codex")
+        assert codex["stale"] is False
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+
+async def test_get_ai_usage_excludes_disabled_provider(tmp_path: Path) -> None:
+    """get_ai_providers 的 WHERE enabled=1:禁用的 provider 从 /api/ai-usage 消失。
+
+    把 chatgpt 置 enabled=0 后,它不应出现在结果中,而 codex / claude_code 仍在。
+    若 SQL 漏掉 WHERE 或写反(enabled=0),此测试变红。
+    """
+    ctx = _make_client(tmp_path)
+    c = await ctx.__aenter__()
+    try:
+        repo = ctx.app.state.repo
+        await repo._conn.execute(
+            "UPDATE ai_provider SET enabled = 0 WHERE provider = 'chatgpt'"
+        )
+        await repo._conn.commit()
+
+        usage = (await c.get("/api/ai-usage")).json()
+        providers = {p["provider"] for p in usage["providers"]}
+        assert "chatgpt" not in providers
+        assert {"codex", "claude_code"}.issubset(providers)
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+
 async def test_get_ai_usage_error_status_is_stale(tmp_path: Path) -> None:
     """上报 status='error' → stale=true 且 status='error'(即使数据很新)。"""
     ctx = _make_client(tmp_path)
@@ -248,6 +329,8 @@ def _make_provider(
     metric_unit: str = "requests",
     resets_at: str | None = "2026-06-28T20:00:00Z",
     window_label: str = "5h 窗口",
+    secondary_used_percent: float | None = None,
+    secondary_resets_at: str | None = None,
     stale: bool = False,
     stale_since: str | None = None,
     stale_age_label: str | None = None,
@@ -265,6 +348,8 @@ def _make_provider(
         metric_unit=metric_unit,
         resets_at=resets_at,
         window_label=window_label,
+        secondary_used_percent=secondary_used_percent,
+        secondary_resets_at=secondary_resets_at,
         stale=stale,
         stale_since=stale_since,
         stale_age_label=stale_age_label,
@@ -310,10 +395,11 @@ def test_ai_card_render_ok() -> None:
 
 
 def test_ai_card_render_error_band() -> None:
-    """used_percent=95 → data-pct-error + ● 符号。"""
+    """used_percent=95 → data-pct-error + ○ 符号(error 用空心,形状区别于 ok ●)。"""
     html = _render_index([_make_provider(used_percent=95.0)])
     assert "data-pct-error" in html
-    assert "●" in html  # ≥90 → error → ●
+    # ≥90 → error → ○(空心);灰度 e-ink 上靠形状即可区分『超限』与『健康』。
+    assert "○" in html
 
 
 def test_ai_card_manual_badge() -> None:
@@ -482,11 +568,11 @@ class TestAiStatusSymbol:
     @pytest.mark.parametrize(
         "kwargs,expected",
         [
-            ({"used_percent": 10.0}, "●"),  # ok
-            ({"used_percent": 75.0}, "◐"),  # warn
-            ({"used_percent": 95.0}, "●"),  # error band
-            ({"stale": True}, "○"),  # stale
-            ({"status": "no_data"}, "◌"),  # no_data
+            ({"used_percent": 10.0}, "●"),  # ok — filled
+            ({"used_percent": 75.0}, "◐"),  # warn — half
+            ({"used_percent": 95.0}, "○"),  # error band — hollow (distinct from ok ●)
+            ({"stale": True}, "◌"),  # stale — dotted
+            ({"status": "no_data"}, "◌"),  # no_data — dotted
         ],
     )
     def test_symbols(self, kwargs: dict, expected: str):
