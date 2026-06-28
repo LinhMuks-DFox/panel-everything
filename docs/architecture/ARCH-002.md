@@ -492,3 +492,53 @@ services:
 | TASK-015 | 前端 VmCard + GpuCard + 状态徽标（e-ink 适配） | P1 | TASK-004, TASK-014 | M |
 | TASK-016 | GPU 历史降采样 job（5m/1h）+ 趋势查询 API | P2 | TASK-013 | M |
 | TASK-017 | 前端 GPU 趋势迷你图（默认折叠） | P2 | TASK-016, TASK-015 | M |
+
+## Addendum（2026-06，REQ-002 真实对齐）
+
+本节根据用户真实 Azure 环境（subscription `d071b64b-e5d3-4b61-9cc8-032d37c7ccb9`、resource group `rg-mux-a100`、VM `mux-a100`、region `japaneast`、size `Standard_NC24ads_A100_v4`、admin `azureuser`、SSH key `~/.ssh/id_ed25519`）对原设计做对齐补充，不改动上文既有内容。对应任务 **TASK-018**。
+
+### 认证确认：只读 Service Principal（Reader）
+
+经与用户确认，本项目选用**只读 Service Principal**，角色 `Reader`，scope 收敛到资源组级别 `/subscriptions/d071b64b-e5d3-4b61-9cc8-032d37c7ccb9/resourceGroups/rg-mux-a100`（而非订阅级，最小权限）。凭证（`AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_SUBSCRIPTION_ID`）以 env 变量或挂载的 secrets 文件路径注入容器，由 pydantic-settings 集中加载；`AZURE_CLIENT_SECRET` 推荐走 secrets 文件而非明文 env。该方案满足 REQ-002 的只读约束——`Reader` 角色无法启停/修改 VM，仅可读取电源态与网络配置。
+
+`Managed Identity` 不可用：树莓派不是 Azure 托管资源，无法访问 IMDS（169.254.169.254），SDK 会超时。这与上文「Service Principal vs Managed Identity 说明」一节裁定一致，此处仅确认落地。
+
+SP 的创建命令、凭证落配、A100 预置注册与部署挂载由 **TASK-019** 提供操作指引。
+
+### 动态公网 IP 解析设计
+
+**问题**：A100（`mux-a100`）使用动态公网 IP，重启/重新分配后 IP 会变。`servers` 表中静态注册的 `ssh_host` 会失效，导致 GPU 采集 SSH 连到错误地址或超时。
+
+**设计**：在 `AzureVmCollector`（collector 名 `azure_vm`）中，解析电源态的同时，用 `azure-mgmt-network`（`NetworkManagementClient`）解析每台已注册 VM 当前的公网 IP（VM → 主 NIC → 关联的 public IP address 资源 → `ip_address`），并作为一条通用指标写入 `latest_snapshot`：
+
+```
+MetricSample(
+    target_id = server.id,
+    metric    = "public_ip",
+    value_text = "<当前公网 IP>",
+    status    = "ok",
+    collected_at = <采集时刻>,
+)
+```
+
+- **不新增数据库列、不新增表**：复用 ARCH-001 通用表「一个 target 一个标量指标」的语义，与已有的 `power_state`（`value_num` 1/0、`value_text` 展示值）并列存放在同一 collector（`azure_vm`）下。`public_ip` 仅写 `value_text`。
+- 解析失败（VM 无公网 IP、NIC 缺失、网络 API 异常）**不致命**：该 VM 不产 `public_ip` 这条 sample，电源态采集与其他 VM 不受影响。
+
+**GpuCollector 消费**：GPU 采集前从 `latest_snapshot` 读 `azure_vm` 的 `power_state` 与 `public_ip`，**仅对设置了 `azure_vm_name` 的服务器生效**（纯 SSH 静态机不受影响）：
+
+1. 读 `(collector="azure_vm", target_id=server.id, metric="power_state")`。若 `value_num != 1.0`（即非 running），**跳过 SSH 采集**，直接产出 `unreachable` 样本（`value_text="vm_not_running"`）。此即合并自原 TASK-016 的 deallocated 跳采优化——统一为「非 running 即跳采」，覆盖 deallocated/stopped/stopping/未知等所有非运行态。
+2. 若 running，读 `(collector="azure_vm", target_id=server.id, metric="public_ip")` 的 `value_text` 作为 SSH 连接 host，**覆盖** `server.ssh_host`。无快照、无 `public_ip` sample 或值为空时，**回退到静态 `ssh_host`**，保持现状行为。
+
+```
+┌──────────────┐  power_state + public_ip   ┌──────────────────┐
+│ AzureVm      │ ──── latest_snapshot ────▶ │ GpuCollector     │
+│ Collector    │     (collector="azure_vm") │ _collect_one()   │
+└──────────────┘                            │  · 非 running→跳采 │
+                                            │  · running→用动态IP│
+                                            │    覆盖 ssh_host   │
+                                            └──────────────────┘
+```
+
+### 取代「deallocated 跳采优化（MS-003 预留）」的实现归属
+
+上文「deallocated 跳采优化（MS-003 预留）」一节中关于「**TASK-016 实现时**……GpuCollector 跳过 SSH」的说法**已被本 Addendum 取代**：跳采（合并为「非 running 跳采」）连同动态 IP 覆盖，统一改由 **TASK-018** 实现。TASK-016 不再承担 GPU 跳采逻辑，专注降采样与趋势查询。读取来源也从直接读 `azure_vm_status` 专用表改为读通用 `latest_snapshot`（`azure_vm` collector），与 ARCH-001 的通用快照语义对齐。

@@ -7,6 +7,12 @@
   - 通用 latest_snapshot / metric_history(框架经 run_collector 自动写入,
     本采集器只返回 MetricSample 列表)
 
+TASK-018 扩展:若注入了 network_client(NetworkManagementClient),额外解析每台
+已注册 VM 当前关联的公网 IP(VM→NIC→public IP 资源链路),产出
+metric='public_ip' 的 MetricSample。A100 等 VM 重启后公网 IP 会变,GpuCollector
+据此快照动态选择 SSH 目标主机,而非静态 ssh_host。IP 解析失败完全隔离,不影响
+power_state sample,也不抛异常。
+
 设计要点(遵循 ARCH-001 Collector 协议与降级语义):
 
   - SDK 是同步的;`list_all()` 在 asyncio.to_thread 中执行,避免阻塞 event loop。
@@ -85,6 +91,30 @@ def _get(obj: Any, key: str) -> Any:
     return getattr(obj, key, None)
 
 
+def _parse_resource_id(resource_id: str | None) -> tuple[str | None, str | None]:
+    """从 Azure ARM 资源 id 提取 (resource_group, resource_name)。
+
+    资源 id 形如::
+
+        /subscriptions/{sub}/resourceGroups/{rg}/providers/{ns}/{type}/{name}
+
+    大小写不敏感地匹配 ``resourceGroups`` 段;取末段为资源名。任一缺失返回
+    (None, None)。SDK 的 get(rg, name) 据此定位资源。
+    """
+    if not resource_id:
+        return None, None
+    parts = [p for p in resource_id.split("/") if p]
+    rg: str | None = None
+    for i, part in enumerate(parts):
+        if part.lower() == "resourcegroups" and i + 1 < len(parts):
+            rg = parts[i + 1]
+            break
+    name = parts[-1] if parts else None
+    if rg is None or name is None:
+        return None, None
+    return rg, name
+
+
 @dataclass
 class AzureVmCollector:
     """Azure VM 电源态采集器。满足 ARCH-001 Collector 协议。
@@ -98,6 +128,10 @@ class AzureVmCollector:
     client: Any  # ComputeManagementClient — Any 以避免在无凭证环境强依赖类型
     gpu_repo: GpuRepository
     base_repo: Repository
+    # NetworkManagementClient — 由 register() 注入;为 None 时不解析公网 IP
+    # (向后兼容:无此 client 的旧构造仍只产 power_state sample)。Any 类型避免
+    # 在无 azure-mgmt-network 依赖的环境强依赖该类型。
+    network_client: Any = None
     name: str = "azure_vm"
     interval_seconds: int = 300
     timeout_seconds: int = 60
@@ -140,7 +174,7 @@ class AzureVmCollector:
                 # 未注册的 Azure VM:跳过(避免越权采集)。
                 continue
             server = by_vm_name[vm_name]
-            samples.append(await self._process_vm(vm, server, now))
+            samples.extend(await self._process_vm(vm, server, now))
 
         return samples
 
@@ -151,10 +185,17 @@ class AzureVmCollector:
 
     async def _process_vm(
         self, vm: Any, server: Any, now: datetime
-    ) -> MetricSample:
-        """处理单台 VM:解析电源态、upsert 专用表、产出 MetricSample。
+    ) -> list[MetricSample]:
+        """处理单台 VM:解析电源态(+ 可选公网 IP),upsert 专用表,产出 MetricSample。
 
-        单台异常不抛出:返回 status='error' 的 sample,且不 upsert(保留旧值)。
+        产出:
+          - 必有一条 metric='power_state' 的 sample(解析失败时 status='error')。
+          - 若注入了 network_client 且解析出公网 IP,额外追加一条
+            metric='public_ip'(value_text=IP)的 sample;解析失败则跳过该条
+            (记 debug 日志,不影响 power_state、不抛异常)。
+
+        单台 power_state 解析异常不抛出:返回 [status='error'],且不 upsert
+        (保留旧值)。
         """
         try:
             instance_view = _get(vm, "instance_view")
@@ -168,21 +209,106 @@ class AzureVmCollector:
                 is_running=bool(is_running),
                 collected_at=now,
             )
-            return MetricSample(
-                target_id=server.id,
-                metric="power_state",
-                value_num=is_running,
-                value_text=display,
-                status="ok",
-                collected_at=now,
-            )
+            samples = [
+                MetricSample(
+                    target_id=server.id,
+                    metric="power_state",
+                    value_num=is_running,
+                    value_text=display,
+                    status="ok",
+                    collected_at=now,
+                )
+            ]
         except Exception:  # noqa: BLE001 — 单台失败隔离,不污染其它 VM
             logger.warning("azure_vm: failed to process VM %r", _get(vm, "name"))
-            return MetricSample(
-                target_id=server.id,
-                metric="power_state",
-                value_num=0.0,
-                value_text="Unknown",
-                status="error",
-                collected_at=now,
+            return [
+                MetricSample(
+                    target_id=server.id,
+                    metric="power_state",
+                    value_num=0.0,
+                    value_text="Unknown",
+                    status="error",
+                    collected_at=now,
+                )
+            ]
+
+        # 公网 IP 解析(独立于 power_state,失败完全隔离、不影响上面的 sample)。
+        if self.network_client is not None:
+            ip = await self._resolve_public_ip(vm)
+            if ip:
+                samples.append(
+                    MetricSample(
+                        target_id=server.id,
+                        metric="public_ip",
+                        value_num=None,
+                        value_text=ip,
+                        status="ok",
+                        collected_at=now,
+                    )
+                )
+        return samples
+
+    async def _resolve_public_ip(self, vm: Any) -> str | None:
+        """解析 VM 当前关联的公网 IP 地址;失败返回 None(记 debug 日志,不抛)。
+
+        链路:VM.network_profile.network_interfaces[0].id → NIC →
+        ip_configurations[*].public_ip_address.id → public IP 资源 → .ip_address。
+
+        同步 SDK 调用统一放进 asyncio.to_thread,避免阻塞 event loop。
+        """
+        try:
+            nic_id = self._first_nic_id(vm)
+            if not nic_id:
+                logger.debug("azure_vm: no NIC on VM %r; skip public_ip", _get(vm, "name"))
+                return None
+
+            ip = await asyncio.to_thread(self._fetch_public_ip_sync, nic_id)
+            if not ip:
+                logger.debug(
+                    "azure_vm: no public IP for VM %r; skip public_ip", _get(vm, "name")
+                )
+            return ip
+        except Exception:  # noqa: BLE001 — IP 解析失败不影响 power_state,不外抛
+            logger.debug(
+                "azure_vm: public IP resolution failed for VM %r", _get(vm, "name")
             )
+            return None
+
+    @staticmethod
+    def _first_nic_id(vm: Any) -> str | None:
+        """从 VM.network_profile.network_interfaces 取第一个 NIC 的资源 id。"""
+        network_profile = _get(vm, "network_profile")
+        if network_profile is None:
+            return None
+        nics = _get(network_profile, "network_interfaces")
+        if not nics:
+            return None
+        return _get(nics[0], "id")
+
+    def _fetch_public_ip_sync(self, nic_id: str) -> str | None:
+        """同步:用 network_client 取 NIC → 其 public IP 资源 → ip_address。
+
+        在 asyncio.to_thread 中执行。从资源 id 解析 resource_group / name 后调用
+        SDK 的 get();任一环节缺失则返回 None。
+        """
+        nic_rg, nic_name = _parse_resource_id(nic_id)
+        if not nic_rg or not nic_name:
+            return None
+        nic = self.network_client.network_interfaces.get(nic_rg, nic_name)
+
+        ip_configs = _get(nic, "ip_configurations")
+        if not ip_configs:
+            return None
+        for ip_config in ip_configs:
+            public_ip_ref = _get(ip_config, "public_ip_address")
+            public_ip_id = _get(public_ip_ref, "id") if public_ip_ref is not None else None
+            if not public_ip_id:
+                continue
+            pip_rg, pip_name = _parse_resource_id(public_ip_id)
+            if not pip_rg or not pip_name:
+                continue
+            public_ip = self.network_client.public_ip_addresses.get(pip_rg, pip_name)
+            ip_address = _get(public_ip, "ip_address")
+            if ip_address:
+                return str(ip_address)
+        return None

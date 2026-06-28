@@ -185,3 +185,36 @@ class RefreshResponse(PublicModel):
 
     triggered: bool
     message: str
+
+
+# === ARCH-004 AI 额度摄取 ===
+# 工作站 Reporter 推送 AI 用量数据的请求模型。请求体不继承 PublicModel
+# （PublicModel 用于对外响应白名单；摄取为入站方向，允许灵活字段）。
+
+
+class AiMetricItem(BaseModel):
+    """单条 AI 用量指标采样（请求体内的元素）。
+
+    metric 取值示例：'used_requests' | 'limit_requests' | 'used_percent'
+    | 'resets_at' | 'window_seconds' | 'extra'。
+    数值型走 value_num，文本/枚举型走 value_text，二者按需填写。
+    """
+
+    metric: str
+    value_num: float | None = None
+    value_text: str | None = None
+
+
+class AiUsagePayload(BaseModel):
+    """POST /api/ingest/ai-usage 的请求体（工作站 Reporter 推送）。
+
+    provider 用 str（非 Literal）：未知 provider 不在 Pydantic 层 422 拒绝，而是
+    交由端点查 ai_provider 表，未命中时返回 400 {"ok": False, "error": ...}，
+    与 TASK-030 测试要求一致（已知 provider 名仍由 ai_provider 表约束）。
+    """
+
+    reporter_version: str
+    reported_at: datetime
+    provider: str
+    metrics: list[AiMetricItem]
+    status: Literal["ok", "error"] = "ok"

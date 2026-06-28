@@ -13,7 +13,9 @@ updated: 2026-06-28
 
 ## 目标
 
-**(MS-003 增强，本期暂不实现。)** 本卡描述 GPU 历史数据降采样功能：定期将 `gpu_metrics` 原始时序聚合为 `gpu_metrics_5m`（5 分钟桶）和 `gpu_metrics_1h`（1 小时桶），并提供趋势查询 REST API，供 TASK-017 前端迷你图使用。同时在 GpuCollector 中激活 deallocated 状态跳采优化。
+本卡描述 GPU 历史数据降采样功能：定期将 `gpu_metrics` 原始时序聚合为 `gpu_metrics_5m`（5 分钟桶）和 `gpu_metrics_1h`（1 小时桶），并提供趋势查询 REST API，供 TASK-017 前端迷你图使用。同时维护 GPU 专用表的数据保留/清理。
+
+> **范围调整**：deallocated/非 running 跳采 + 动态公网 IP 覆盖**已移至 TASK-018**（见 ARCH-002 Addendum）。本卡不再涉及 `_is_vm_running`、不改 `collectors/gpu/collector.py`，专注降采样、趋势查询与专用表清理。
 
 ## 技术规格
 
@@ -24,7 +26,6 @@ updated: 2026-06-28
 | `src/panel/collectors/gpu/downsampler.py` | 降采样 APScheduler job 函数 |
 | `src/panel/db/gpu_repository.py` | 追加降采样读写方法 |
 | `src/panel/api/azure.py` | 追加 `/api/v1/gpu/{server_id}/{gpu_index}/history` |
-| `src/panel/collectors/gpu/collector.py` | 激活 `_is_vm_running` 跳采逻辑 |
 
 ### 降采样 Job
 
@@ -61,17 +62,7 @@ scheduler.add_job(run_1h_downsample, 'interval', hours=1, args=[gpu_repo])
 
 响应：`list[GpuHistoryPointOut]`：`{bucket_start, avg_util_pct, avg_mem_pct, max_temp_c, max_power_w, sample_count}`
 
-### deallocated 跳采激活（GpuCollector）
-
-激活 TASK-013 中预留的注释代码：
-
-```python
-# collectors/gpu/collector.py _collect_one() 开头
-vm_status = await self._gpu_repo.get_vm_status(server.id)
-if vm_status and vm_status.power_state in ("Deallocated", "Stopped"):
-    return [GpuSample(server_id=server.id, gpu_index=0, ...,
-                      status="unreachable", value_text="vm_not_running")]
-```
+> deallocated/非 running 跳采 + 动态 IP 已移至 TASK-018，本卡不改 `collectors/gpu/collector.py`。
 
 ### 数据保留策略
 
@@ -84,21 +75,18 @@ if vm_status and vm_status.power_state in ("Deallocated", "Stopped"):
 1. 实现 `downsampler.py` 中两个 async job 函数，使用 `aiosqlite` 聚合查询。
 2. `GpuRepository` 追加 `upsert_5m_bucket`、`upsert_1h_bucket`、`get_gpu_history_5m`、`get_gpu_history_1h`。
 3. `api/azure.py` 追加趋势端点，根据 `granularity` 参数选择查询来源表。
-4. `GpuCollector._collect_one` 中去掉 TASK-013 预留的注释符，激活跳采逻辑。
-5. 数据清理：在 5m job 结尾追加原始表清理语句。
+4. 数据清理：在 5m job 结尾追加原始表清理语句。
 
 ## 测试要求
 
 - [ ] 降采样 job 正确计算桶 avg/max/count
 - [ ] 时间桶对齐逻辑（5min/1h 向下取整）经单测验证
 - [ ] GET history 端点返回正确粒度数据
-- [ ] deallocated 机器跳过 SSH，产出 `vm_not_running` 样本
 - [ ] 原始表清理（48h 外记录删除）经测试验证
 
 ## 完成标准
 
 - [ ] 两个降采样 job 注册并按间隔触发
 - [ ] 趋势 API 支持 raw/5m/1h 三种粒度
-- [ ] deallocated 跳采逻辑激活
-- [ ] 数据保留策略（清理 job）实现
+- [ ] 数据保留策略（GPU 专用表清理 job）实现：`gpu_metrics` 48h、`gpu_metrics_5m` 30 天、`gpu_metrics_1h` 长期
 - [ ] TASK-017 所需的 API 契约完全满足

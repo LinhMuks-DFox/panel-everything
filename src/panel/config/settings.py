@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     # Path to the SSH private key file; never store the key content here.
     ssh_key_path: str = ""  # e.g. /secrets/id_ed25519
 
+    # --- Ingest (ARCH-004 / TASK-030) ---
+    # Bearer token for POST /api/ingest/* endpoints. Empty string disables auth
+    # (endpoint accepts any request). Set via PANEL_INGEST_TOKEN to require a token.
+    ingest_token: str = ""
+
 
 def read_secret(name_or_path: str, settings: Settings | None = None) -> str:
     """Read a secret value from the secrets directory or an absolute path.

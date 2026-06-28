@@ -2,7 +2,7 @@
 id: TASK-023
 title: "Azure-Tailscale 节点关联（node_azure_mapping + 徽标）"
 status: todo
-priority: P2
+priority: P3
 architecture: ARCH-003
 dependencies: [TASK-020, TASK-013]
 estimated_effort: S
@@ -13,8 +13,9 @@ updated: 2026-06-28
 
 ## 目标
 
-**本任务属于 MS-003（趋势与关联增强），本期（MS-001/MS-002）不实现。**
-本文档仅作设计占位，供 Coder 在 MS-003 阶段直接参照实现，无需重新设计。
+**本轮不实现（降级 P3）**：用户选择 A100 走 Azure 公网而非接入 Tailscale，A100 无 tailscale 节点；且 GPU 跳采已由 TASK-018 按 Azure 电源态实现。待出现同时在 Azure 与 Tailscale 的机器再启用。
+
+本文档仅作设计占位，供 Coder 在需要时直接参照实现，无需重新设计。
 
 建立 Azure VM（`servers` 表）与 Tailscale 节点（`tailscale_nodes` 表）的映射关系，
 使面板可在 VM 卡片上展示对应节点的在线态徽标，同时在 GPU 采集时利用映射判断节点是否可达

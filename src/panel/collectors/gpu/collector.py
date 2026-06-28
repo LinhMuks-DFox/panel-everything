@@ -16,6 +16,10 @@ metric_history。
     非 'ok' 时所有数值字段置 None。
   - SSH 执行层(asyncssh.connect)经实例属性注入,测试可替换为 mock,单测不连真实机。
   - known_hosts=None 为内网 Tailscale 隔离下首期假设(见连接处注释)。
+  - Azure 动态主机(TASK-018):绑定 azure_vm_name 的机器,SSH 前先读
+    azure_vm collector 的 power_state 快照——非 running 直接跳采(标
+    'vm_not_running'),running 则用其 public_ip 快照作连接 host(A100 重启后
+    公网 IP 会变,静态 ssh_host 失效)。未绑定/Azure 未配置则用静态 ssh_host。
 
 凭证保护:私钥以路径(server.ssh_key_path)形式由 asyncssh 读取;本类不持有也不
 记录私钥内容,日志只写主机/卡数/状态。
@@ -77,7 +81,11 @@ class SshRunner(Protocol):
     """
 
     async def run(
-        self, server: ServerRow, command: str, timeout_seconds: float
+        self,
+        server: ServerRow,
+        command: str,
+        timeout_seconds: float,
+        host: str | None = None,
     ) -> SshResult: ...
 
 
@@ -85,16 +93,22 @@ class AsyncSshRunner:
     """基于 asyncssh 的默认 SSH 执行层。"""
 
     async def run(
-        self, server: ServerRow, command: str, timeout_seconds: float
+        self,
+        server: ServerRow,
+        command: str,
+        timeout_seconds: float,
+        host: str | None = None,
     ) -> SshResult:
         """连接 server 并执行 command;返回 stdout 与退出码。
 
-        连接参数遵循 ARCH-002 / TASK-013 技术规格。
+        host 为 None 时连 server.ssh_host(静态地址);否则连传入的 host
+        (Azure 动态公网 IP,见 GpuCollector._collect_one)。其余连接参数遵循
+        ARCH-002 / TASK-013 技术规格。
         """
         # known_hosts=None:ARCH-001 裁定——内网 Tailscale 隔离下可接受;
         # P3 增强强校验(改为加载 known_hosts 并校验主机指纹)。
         async with asyncssh.connect(
-            host=server.ssh_host,
+            host=host if host is not None else server.ssh_host,
             port=server.ssh_port,
             username=server.ssh_user,
             client_keys=[server.ssh_key_path] if server.ssh_key_path else None,
@@ -194,13 +208,21 @@ def _error_sample(server_id: int, gpu_index: int, now: datetime) -> GpuSample:
 
 
 def _status_sample(
-    server_id: int, status: str, now: datetime, gpu_index: int = 0
+    server_id: int,
+    status: str,
+    now: datetime,
+    gpu_index: int = 0,
+    value_text: str | None = None,
 ) -> GpuSample:
-    """构造一条数值全 None 的 unreachable/error 占位 GpuSample(整机级)。"""
+    """构造一条数值全 None 的 unreachable/error 占位 GpuSample(整机级)。
+
+    value_text 透传到 GpuSample.gpu_name(占位字段),供上层标注原因
+    (如 VM 非 running 时的 'vm_not_running')。
+    """
     return GpuSample(
         server_id=server_id,
         gpu_index=gpu_index,
-        gpu_name=None,
+        gpu_name=value_text,
         util_pct=None,
         mem_used_mib=None,
         mem_total_mib=None,
@@ -289,16 +311,47 @@ class GpuCollector:
         """
         now = datetime.now(UTC)
 
-        # TODO(MS-003/TASK-016): 若 VM 处于 deallocated/stopped 状态,跳过 SSH 采集,
-        # 直接产出 status='unreachable'(value_text='vm_not_running'),避免连接超时堆积。
-        # if not await self._is_vm_running(server.id):
-        #     return [_status_sample(server.id, "unreachable", now)]
+        # Azure 动态主机解析(TASK-018):对绑定了 Azure VM 的机器,
+        #   1) VM 非 running → 跳过 SSH,直接产出 unreachable(标 'vm_not_running'),
+        #      避免对已停机 VM 反复连接超时堆积。
+        #   2) VM running → 用 azure_vm collector 解析出的当前公网 IP 作连接 host,
+        #      因为 A100 重启后公网 IP 会变,静态 ssh_host 会失效。
+        # 未绑定 Azure VM(azure_vm_name 空)或 Azure 未配置(无 power_state 快照)→
+        # host=None,沿用静态 ssh_host,行为保持现状。
+        host: str | None = None
+        if server.azure_vm_name:
+            ps = await self.base_repo.get_snapshot_metric(
+                "azure_vm", server.id, "power_state"
+            )
+            if ps is not None and ps.value_num != 1.0:
+                logger.info(
+                    "gpu: %s Azure VM not running (%s); skip SSH",
+                    server.name,
+                    ps.value_text,
+                )
+                return [
+                    _status_sample(
+                        server.id, "unreachable", now, value_text="vm_not_running"
+                    )
+                ]
+            if ps is not None:
+                ip = await self.base_repo.get_snapshot_metric(
+                    "azure_vm", server.id, "public_ip"
+                )
+                host = ip.value_text if ip and ip.value_text else None
 
         try:
             async with asyncio.timeout(self.timeout_seconds):
-                result = await self.ssh_runner.run(
-                    server, NVIDIA_SMI_CMD, float(self.timeout_seconds)
-                )
+                # host=None 时不传 host 关键字,兼容只接受 (server, cmd, timeout)
+                # 三参签名的旧 SshRunner 实现(static ssh_host 路径)。
+                if host is None:
+                    result = await self.ssh_runner.run(
+                        server, NVIDIA_SMI_CMD, float(self.timeout_seconds)
+                    )
+                else:
+                    result = await self.ssh_runner.run(
+                        server, NVIDIA_SMI_CMD, float(self.timeout_seconds), host=host
+                    )
         except (TimeoutError, asyncssh.Error, OSError) as exc:
             # 连接/认证/网络故障或超时:该机不可达。
             logger.warning(
@@ -328,7 +381,8 @@ class GpuCollector:
 
         metric='gpu_any_running':value_num=1.0(有任一卡 ok)/0.0;
         value_text='{ok}/{total} gpus ok';status='ok'(有 ok 卡)否则该机的
-        主导失败态(unreachable 优先,否则 error)。
+        主导失败态(unreachable 优先,否则 error)。VM 非 running 跳采的占位
+        sample(gpu_name='vm_not_running')特判,value_text 透传该标注。
         """
         total = len(samples)
         ok_count = sum(1 for s in samples if s.status == "ok")
@@ -338,11 +392,20 @@ class GpuCollector:
             status = "unreachable"
         else:
             status = "error"
+        # VM 非 running 跳采:整机一条占位 sample,标注原因供前端区分"已停机"。
+        if (
+            ok_count == 0
+            and len(samples) == 1
+            and samples[0].gpu_name == "vm_not_running"
+        ):
+            value_text = "vm_not_running"
+        else:
+            value_text = f"{ok_count}/{total} gpus ok"
         return MetricSample(
             target_id=server.id,
             metric="gpu_any_running",
             value_num=1.0 if ok_count > 0 else 0.0,
-            value_text=f"{ok_count}/{total} gpus ok",
+            value_text=value_text,
             status=status,  # type: ignore[arg-type]
             collected_at=now,
         )

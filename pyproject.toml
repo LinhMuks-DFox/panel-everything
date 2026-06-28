@@ -24,6 +24,7 @@ dependencies = [
     "asyncssh",
     "azure-identity",
     "azure-mgmt-compute",
+    "azure-mgmt-network",
     "pydantic",
     "pydantic-settings",
     "python-multipart",

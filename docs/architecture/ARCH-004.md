@@ -1,16 +1,14 @@
 ---
 id: ARCH-004
 title: "AI 使用额度监控"
-status: draft
+status: approved
 requirements: [REQ-004]
 author: Architect
 created: 2026-06-28
 updated: 2026-06-28
 ---
 
-> **[后期阶段 MS-004，本期不实现]**
-> 本文档为前瞻性设计，待 MS-002（设备监控核心功能）稳定交付后再进入实现阶段。
-> 当前状态：`draft`，细节可在 MS-002 完成后根据实际情况修订。
+> **[MS-004，已批准进入实现]** 设计与三数据源可行性调研已完成，MS-002 已稳定交付，本架构进入实现阶段。
 
 ---
 

@@ -393,3 +393,33 @@ services:
 | TASK-003 | Collector 框架:协议 + 注册表 + APScheduler 调度 + 框架级降级 | P0 | TASK-002 | M |
 | TASK-004 | SSR 前端壳:base 布局 + 响应式/e-ink CSS + 轮询/meta-refresh 降级 | P0 | TASK-001 | M |
 | TASK-005 | 配置与凭证管理 + response model 白名单 + 日志脱敏 | P0 | TASK-001 | S |
+
+## Addendum（2026-06，历史数据 retention）
+
+通用 `metric_history` 表为 append-only（见上文「metric_history — 历史时序」一节，第 253 行已标记本期不实现自动清理）。在树莓派（资源受限）上长期运行，该表会随采集周期无限增长，最终耗尽磁盘并拖慢历史查询。对应任务 **TASK-040**。
+
+### 设计：周期性 retention job
+
+新增一个周期性 retention job，由 ARCH-001 既有的 APScheduler 调度（默认**每日一次**），按 `collected_at` 删除超过保留窗口的 `metric_history` 行：
+
+```sql
+DELETE FROM metric_history WHERE collected_at < :before;
+-- :before = now(UTC) - retention_days
+```
+
+- **保留窗口**：默认 **30 天**，通过 env `PANEL_HISTORY_RETENTION_DAYS`（pydantic-settings `history_retention_days: int = 30`）可配。
+- **调度**：`interval` 每日一次，job 函数 `prune_metric_history(repo, retention_days)`（`collectors/retention.py`），删除完记录删除行数到日志。
+- **仅作用于通用表**：本 job 只清 `metric_history`。
+
+### 与 GPU 专用表清理的互补关系
+
+ARCH-002 的 GPU 专用表有各自的清理策略，由 **TASK-016** 负责，与本 job 互补、互不重叠：
+
+| 表 | 清理责任 | 保留策略 |
+|----|----------|----------|
+| `metric_history`（通用） | TASK-040（本 Addendum） | 默认 30 天 |
+| `gpu_metrics`（原始） | TASK-016 | 48h |
+| `gpu_metrics_5m` | TASK-016 | 30 天 |
+| `gpu_metrics_1h` | TASK-016 | 长期保留（无清理） |
+
+两者覆盖不同的物理表，组合后保证树莓派磁盘占用有界。

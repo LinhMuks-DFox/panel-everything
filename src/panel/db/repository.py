@@ -570,3 +570,25 @@ Repository.upsert_tailscale_node = _upsert_tailscale_node  # type: ignore[attr-d
 Repository.get_all_nodes = _get_all_nodes  # type: ignore[attr-defined]
 Repository.get_node_by_id = _get_node_by_id  # type: ignore[attr-defined]
 Repository.get_node_events = _get_node_events  # type: ignore[attr-defined]
+
+
+# --------------------------------------------------------------------------- #
+# ARCH-004 / TASK-030: AI 用量摄取 — ai_provider 查询方法
+# --------------------------------------------------------------------------- #
+# 同 Tailscale 扩展，采用 setattr 注入而不改类体封口处。
+
+
+async def _get_ai_provider_id(self: Repository, provider: str) -> int | None:
+    """按 provider 名查 ai_provider.id;未找到返回 None。
+
+    供摄取端点将 provider 名解析为 latest_snapshot / metric_history 的 target_id。
+    """
+    async with self._conn.execute(
+        "SELECT id FROM ai_provider WHERE provider = ?",
+        (provider,),
+    ) as cur:
+        row = await cur.fetchone()
+    return row["id"] if row is not None else None
+
+
+Repository.get_ai_provider_id = _get_ai_provider_id  # type: ignore[attr-defined]
