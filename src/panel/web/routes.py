@@ -16,11 +16,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+import aiosqlite
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from panel.db.repository import CollectorRunRow
+from panel.domain.models import ServerIn
 
 logger = logging.getLogger(__name__)
 
@@ -306,3 +308,102 @@ async def index(request: Request) -> HTMLResponse:
             "stale_seconds": tailscale_stale_seconds,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# 服务器注册管理页(REQ-002 注册机制的 Web 入口；REST API 在 /api/v1/servers)
+# 供人类手动填写监控目标的连接/校验信息(SSH host/user/key、Azure VM 名等)。
+# ---------------------------------------------------------------------------
+
+# 表单提示码 → 中文消息(避免在 HTTP Location 头里放非 ASCII)
+_FLASH = {
+    "created": ("ok", "服务器已注册。GPU 采集器将在下一轮(≤60s)尝试连接。"),
+    "deleted": ("ok", "服务器已删除。"),
+    "dup": ("err", "注册失败:同名服务器已存在。"),
+    "fail": ("err", "注册失败:请检查输入。"),
+    "norepo": ("err", "数据层不可用。"),
+}
+
+
+def _clean(v: str | None) -> str | None:
+    """空白串归一为 None。"""
+    v = (v or "").strip()
+    return v or None
+
+
+@router.get("/servers", response_class=HTMLResponse, include_in_schema=False)
+async def servers_page(request: Request, flash: str | None = None) -> HTMLResponse:
+    """渲染服务器注册管理页:已注册列表 + 注册表单。"""
+    gpu_repo = getattr(request.app.state, "gpu_repo", None)
+    servers: list[Any] = []
+    if gpu_repo is not None:
+        try:
+            servers = await gpu_repo.get_all_servers()
+        except Exception:
+            logger.exception("Failed to load servers for /servers page")
+
+    flash_kind, flash_msg = (None, None)
+    if flash in _FLASH:
+        flash_kind, flash_msg = _FLASH[flash]
+
+    return templates.TemplateResponse(
+        request=request,
+        name="servers.html",
+        context={
+            "is_eink": _is_eink(request),
+            "now": datetime.now(UTC).isoformat(),
+            "servers": servers,
+            "flash_kind": flash_kind,
+            "flash_msg": flash_msg,
+        },
+    )
+
+
+@router.post("/servers", include_in_schema=False)
+async def servers_create(  # noqa: PLR0913 — 表单字段平铺
+    request: Request,
+    name: str = Form(...),
+    ssh_host: str = Form(""),
+    ssh_port: int = Form(22),
+    ssh_user: str = Form("azureuser"),
+    ssh_key_path: str = Form(""),
+    azure_resource_group: str = Form(""),
+    azure_vm_name: str = Form(""),
+    has_gpu: str = Form("off"),
+    notes: str = Form(""),
+) -> RedirectResponse:
+    """处理注册表单提交,写入 servers 表后重定向回 /servers。"""
+    gpu_repo = getattr(request.app.state, "gpu_repo", None)
+    if gpu_repo is None:
+        return RedirectResponse("/servers?flash=norepo", status_code=303)
+    try:
+        data = ServerIn(
+            name=name.strip(),
+            azure_resource_group=_clean(azure_resource_group),
+            azure_vm_name=_clean(azure_vm_name),
+            ssh_host=_clean(ssh_host),
+            ssh_port=ssh_port,
+            ssh_user=(ssh_user.strip() or "azureuser"),
+            ssh_key_path=_clean(ssh_key_path),
+            has_gpu=(has_gpu in ("on", "true", "1", "yes")),
+            notes=_clean(notes),
+        )
+        await gpu_repo.insert_server(data)
+    except aiosqlite.IntegrityError:
+        return RedirectResponse("/servers?flash=dup", status_code=303)
+    except Exception:
+        logger.exception("Failed to register server via form")
+        return RedirectResponse("/servers?flash=fail", status_code=303)
+    return RedirectResponse("/servers?flash=created", status_code=303)
+
+
+@router.post("/servers/{server_id}/delete", include_in_schema=False)
+async def servers_delete(request: Request, server_id: int) -> RedirectResponse:
+    """删除一台已注册服务器(级联清理其 VM/GPU 数据),重定向回 /servers。"""
+    gpu_repo = getattr(request.app.state, "gpu_repo", None)
+    if gpu_repo is not None:
+        try:
+            await gpu_repo.delete_server(server_id)
+        except Exception:
+            logger.exception("Failed to delete server %s", server_id)
+    return RedirectResponse("/servers?flash=deleted", status_code=303)

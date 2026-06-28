@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if flash_msg %}
+<section class="card" data-module="flash">
+  <p class="flash flash--{{ flash_kind }}">{{ flash_msg }}</p>
+</section>
+{% endif %}
+
+{# ---- 注册表单 ---- #}
+<section class="card" data-module="server-register">
+  <h2 class="card-title">注册监控目标</h2>
+  <p class="card-meta">填写服务器连接信息。Azure VM 名用于云端状态匹配;勾选 GPU 后采集器会经 SSH 跑 nvidia-smi。SSH 私钥仅存路径,不回传前端。</p>
+  <form class="reg-form" method="post" action="/servers" accept-charset="utf-8">
+    <label class="reg-field">
+      <span>名称 <em>*必填,唯一</em></span>
+      <input type="text" name="name" required placeholder="takamichi-lab-pc15">
+    </label>
+    <label class="reg-field">
+      <span>SSH 主机 (Tailscale IP 或 FQDN)</span>
+      <input type="text" name="ssh_host" placeholder="100.118.45.6 或 takamichi-lab-pc15.tailb4e0c4.ts.net">
+    </label>
+    <div class="reg-row">
+      <label class="reg-field reg-field--sm">
+        <span>SSH 端口</span>
+        <input type="number" name="ssh_port" value="22">
+      </label>
+      <label class="reg-field">
+        <span>SSH 用户名</span>
+        <input type="text" name="ssh_user" placeholder="mux-xliu">
+      </label>
+    </div>
+    <label class="reg-field">
+      <span>SSH 私钥路径 (Tailscale SSH 可留空)</span>
+      <input type="text" name="ssh_key_path" placeholder="/secrets/id_ed25519 或留空">
+    </label>
+    <div class="reg-row">
+      <label class="reg-field">
+        <span>Azure 资源组 (可选)</span>
+        <input type="text" name="azure_resource_group" placeholder="rg-ml-tokyo">
+      </label>
+      <label class="reg-field">
+        <span>Azure VM 名 (可选)</span>
+        <input type="text" name="azure_vm_name" placeholder="云端 VM 名,用于状态匹配">
+      </label>
+    </div>
+    <label class="reg-field reg-check">
+      <input type="checkbox" name="has_gpu" value="on" checked>
+      <span>这是 GPU 服务器(启用 nvidia-smi 采集)</span>
+    </label>
+    <label class="reg-field">
+      <span>备注 (可选)</span>
+      <input type="text" name="notes" placeholder="如:A100×4 训练机">
+    </label>
+    <button type="submit" class="reg-submit">注册</button>
+  </form>
+</section>
+
+{# ---- 已注册列表 ---- #}
+<section class="card" data-module="server-list">
+  <h2 class="card-title">已注册服务器 ({{ servers | length }})</h2>
+  {% if servers %}
+  <div class="table-scroll">
+    <table class="reg-table">
+      <thead>
+        <tr><th>名称</th><th>SSH</th><th>用户</th><th>GPU</th><th>Azure VM</th><th>备注</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for s in servers %}
+        <tr>
+          <td>{{ s.name }}</td>
+          <td>{{ s.ssh_host or "—" }}{% if s.ssh_host %}:{{ s.ssh_port }}{% endif %}</td>
+          <td>{{ s.ssh_user }}</td>
+          <td>{% if s.has_gpu %}● 是{% else %}○ 否{% endif %}</td>
+          <td>{{ s.azure_vm_name or "—" }}</td>
+          <td>{{ s.notes or "—" }}</td>
+          <td>
+            <form method="post" action="/servers/{{ s.id }}/delete" onsubmit="return confirm('删除 {{ s.name }}?');">
+              <button type="submit" class="reg-del">删除</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="card-empty-msg">暂无已注册服务器。用上方表单添加。</p>
+  {% endif %}
+</section>
+
+<section class="card" data-module="nav-back">
+  <a class="nav-link" href="/">← 返回总览</a>
+</section>
+
+{% endblock %}

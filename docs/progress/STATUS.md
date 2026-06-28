@@ -39,6 +39,7 @@
 | TASK-015 | 前端 VmCard + GpuCard + 状态徽标(e-ink 适配) | ARCH-002 | P1 | done | sonnet-4.6 | 2026-06-28 |
 | TASK-016 | GPU 历史降采样 job(5m/1h) + 趋势查询 API *(MS-003，本期不实现)* | ARCH-002 | P2 | todo | — | 2026-06-28 |
 | TASK-017 | 前端 GPU 趋势迷你图(默认折叠) *(MS-003，本期不实现)* | ARCH-002 | P2 | todo | — | 2026-06-28 |
+| TASK-024 | 服务器注册管理 Web 表单(REQ-002 注册入口) | ARCH-002 | P1 | done | opus-4.8 | 2026-06-28 |
 | TASK-020 | Tailscale 采集器(socket localapi) + 表 + 在线判定 | ARCH-003 | P1 | done | sonnet-4.6 | 2026-06-28 |
 | TASK-021 | Tailscale REST API | ARCH-003 | P1 | done | sonnet-4.6 | 2026-06-28 |
 | TASK-022 | 前端 NodeCard/NodeGrid/StaleWarning(e-ink 适配) | ARCH-003 | P1 | done | sonnet-4.6 | 2026-06-28 |
