@@ -35,6 +35,13 @@ HEALTH_TIMEOUT=90      # 健康检查总超时(秒)
 DO_SEED=0
 DO_BUILD=1
 
+# Apple Silicon + colima 默认的 macOS Virtualization.Framework(VZ)后端,在 import
+# asyncssh(其 cryptography/OpenSSL 原生初始化)时会触发 SIGILL(退出码 132),导致
+# 容器反复重启、面板起不来。改用 QEMU 后端可规避。脚本会在该场景下自动启用一个
+# 专用 colima profile(QEMU),不动用户已有的默认 colima。树莓派/Linux 原生 arm64
+# 无此问题,完全不受影响。
+COLIMA_QEMU_PROFILE="panel-qemu"
+
 # ───────────────────────── 日志 ─────────────────────────
 # 仅在连接到 TTY 时着色,管道/重定向时退化为纯文本(对 e-ink/CI 友好)。
 if [ -t 1 ]; then
@@ -112,11 +119,116 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 # daemon 必须在跑,否则后续 build/up 会以晦涩错误失败。
+# macOS 没有系统级 docker daemon,需要一个后端 VM(colima / Docker Desktop / OrbStack)。
+# 这里在守护进程不可用时,尽量"自动拉起"后端再重试,真起不来才退出并给针对性提示。
+# 是否为 Apple Silicon(arm64 Mac)。该平台 colima 默认 VZ 后端有 asyncssh SIGILL 问题。
+is_apple_silicon() {
+  [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]
+}
+
+# Apple Silicon 上:启动专用 QEMU profile 并把 docker context 切过去。
+# 已存在则复用,未存在则创建(需要 qemu-img;缺失时返回 1 让调用方提示)。
+start_colima_qemu() {
+  if ! command -v qemu-img >/dev/null 2>&1; then
+    return 1   # 缺 QEMU,交调用方提示 'brew install qemu'。
+  fi
+  if colima status --profile "${COLIMA_QEMU_PROFILE}" >/dev/null 2>&1; then
+    log "复用已有 QEMU 后端(profile ${COLIMA_QEMU_PROFILE})。"
+  else
+    log "Apple Silicon 检测:用 QEMU 后端启动 colima(规避 VZ 的 asyncssh SIGILL)…"
+    log "  首次会创建 VM,需要几分钟,请耐心。"
+    colima start --profile "${COLIMA_QEMU_PROFILE}" \
+      --arch aarch64 --vm-type qemu --cpu 2 --memory 4 || return 1
+  fi
+  # 把 docker context 切到该 profile(colima 命名为 colima-<profile>)。
+  docker context use "colima-${COLIMA_QEMU_PROFILE}" >/dev/null 2>&1 || true
+  docker info >/dev/null 2>&1
+}
+
+try_start_daemon() {
+  # colima:命令行后端,可由脚本直接拉起(无需手动开 App)。
+  if command -v colima >/dev/null 2>&1; then
+    # Apple Silicon:优先走 QEMU profile 规避 VZ 的 SIGILL。
+    if is_apple_silicon; then
+      if start_colima_qemu; then
+        return 0
+      fi
+      # QEMU 路线没成(多半缺 qemu),提示后退回默认 colima(可能仍会 SIGILL,但至少能起 daemon)。
+      warn "未能启用 QEMU 后端(可能未安装 QEMU)。Apple Silicon 上建议: brew install qemu 后重跑 ./start.sh"
+      warn "  否则面板容器可能因 VZ 后端的 asyncssh SIGILL 反复重启。"
+    fi
+    if colima status >/dev/null 2>&1; then
+      return 0   # 已在跑,docker info 仍失败多半是沙箱/权限,交给调用方判断。
+    fi
+    log "检测到 colima(未运行),尝试自动启动: colima start …(首次会创建 VM,稍候)"
+    if colima start; then
+      return 0
+    fi
+    return 1
+  fi
+  # Docker Desktop(macOS):无 CLI 启动方式,用 open 拉起 App 后轮询等待。
+  if [ "$(uname -s)" = "Darwin" ] && [ -d "/Applications/Docker.app" ]; then
+    log "检测到 Docker Desktop(未运行),尝试自动启动并等待 …"
+    open -a Docker || true
+    local i=0
+    while [ "${i}" -lt 60 ]; do
+      docker info >/dev/null 2>&1 && return 0
+      sleep 2; i=$((i + 2))
+    done
+    return 1
+  fi
+  # OrbStack(macOS):同理用 open 拉起。
+  if [ "$(uname -s)" = "Darwin" ] && [ -d "/Applications/OrbStack.app" ]; then
+    log "检测到 OrbStack(未运行),尝试自动启动并等待 …"
+    open -a OrbStack || true
+    local i=0
+    while [ "${i}" -lt 60 ]; do
+      docker info >/dev/null 2>&1 && return 0
+      sleep 2; i=$((i + 2))
+    done
+    return 1
+  fi
+  # Linux:尝试 systemd 启动 docker 服务(可能需要 sudo)。
+  if [ "$(uname -s)" = "Linux" ] && command -v systemctl >/dev/null 2>&1; then
+    log "尝试启动 docker 服务: systemctl start docker(可能需要 sudo)…"
+    systemctl start docker 2>/dev/null || sudo systemctl start docker 2>/dev/null || true
+    docker info >/dev/null 2>&1 && return 0
+    return 1
+  fi
+  return 1
+}
+
 if ! docker info >/dev/null 2>&1; then
-  err "Docker 已安装但守护进程未运行 / 当前用户无权限访问。"
-  err "  - 启动服务: (Linux) sudo systemctl start docker  /  (macOS) 打开 Docker Desktop"
-  err "  - 权限: 把当前用户加入 docker 组 'sudo usermod -aG docker \$USER' 后重新登录"
-  exit 1
+  warn "Docker 守护进程当前不可用,尝试自动拉起后端 …"
+  try_start_daemon || true
+  if ! docker info >/dev/null 2>&1; then
+    err "Docker 已安装但守护进程未运行 / 当前用户无权限访问 / 当前 shell 被沙箱限制。"
+    err "  当前 docker context: $(docker context show 2>/dev/null || echo '?')"
+    err "  - colima 用户(macOS 命令行后端): 运行 'colima start' 后重试 ./start.sh"
+    err "  - Docker Desktop / OrbStack(macOS): 打开对应 App,等右上角图标变绿后重试"
+    err "  - Linux: sudo systemctl start docker;权限问题 'sudo usermod -aG docker \$USER' 后重新登录"
+    err "  (若 'colima status' 显示 running 但这里仍失败,多半是当前 shell 沙箱挡住了 docker.sock,换非沙箱终端重试)"
+    exit 1
+  fi
+fi
+
+# daemon 已就绪。但 Apple Silicon + colima 默认 VZ 后端会让容器因 asyncssh SIGILL
+# 反复重启。若当前正用着 colima 的 VZ 后端,主动切到/启动 QEMU profile 规避。
+if is_apple_silicon && command -v colima >/dev/null 2>&1; then
+  CUR_CTX="$(docker context show 2>/dev/null || true)"
+  # 当前 context 不是我们的 QEMU profile,且看起来是 colima(默认/其它 VZ profile)时才介入。
+  if [ "${CUR_CTX}" != "colima-${COLIMA_QEMU_PROFILE}" ] && printf '%s' "${CUR_CTX}" | grep -qi 'colima'; then
+    # 仅当默认 colima 确实是 VZ(vz/vmType: vz)时才切;QEMU 单 profile 用户无需打扰。
+    BACKEND="$(colima status 2>&1 | grep -ioE 'Virtualization.Framework|qemu|vz' | head -1 || true)"
+    if printf '%s' "${BACKEND}" | grep -qiE 'Virtualization.Framework|vz'; then
+      warn "检测到 Apple Silicon 上 colima 正用 VZ 后端 —— 已知会让面板容器因 asyncssh SIGILL 反复重启。"
+      if start_colima_qemu; then
+        ok "已切换到 QEMU 后端(profile ${COLIMA_QEMU_PROFILE}),规避该问题。"
+      else
+        warn "未能启用 QEMU 后端。请 'brew install qemu' 后重跑 ./start.sh;否则容器可能反复重启。"
+      fi
+    fi
+  fi
 fi
 
 if [ ! -f "${COMPOSE_FILE}" ]; then
