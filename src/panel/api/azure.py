@@ -14,18 +14,20 @@ underlying ServerRow dataclass carries it.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from panel.api.deps import get_gpu_repo, get_repo
-from panel.db.gpu_repository import GpuMetricRow, GpuRepository
+from panel.db.gpu_repository import GpuBucketRow, GpuMetricRow, GpuRepository
 from panel.db.repository import CollectorRunRow, Repository
 from panel.domain.models import (
     CollectorStatusOut,
     DashboardAzureOut,
     DashboardVmOut,
+    GpuHistoryPointOut,
     GpuMetricOut,
     ServerIn,
     ServerOut,
@@ -314,3 +316,85 @@ async def get_azure_dashboard(
     ``vms=[]``.
     """
     return await build_azure_dashboard(repo=repo, gpu_repo=gpu_repo)
+
+
+# ---------------------------------------------------------------------------
+# GPU trend history endpoint (TASK-016) — for TASK-017 front-end mini-charts
+# ---------------------------------------------------------------------------
+
+# Default look-back window when ``since`` is omitted.
+HISTORY_DEFAULT_WINDOW: timedelta = timedelta(hours=24)
+
+
+def _raw_to_history_point(row: GpuMetricRow) -> GpuHistoryPointOut:
+    """Map a raw gpu_metrics row to a GpuHistoryPointOut.
+
+    For raw granularity each row is its own "bucket": avg_* echoes the point
+    value, max_* echoes the point value, sample_count is always 1.
+    """
+    return GpuHistoryPointOut(
+        bucket_start=_parse_utc(row.collected_at),
+        avg_util_pct=row.util_pct,
+        avg_mem_pct=row.mem_pct,
+        max_temp_c=row.temp_c,
+        max_power_w=row.power_w,
+        sample_count=1,
+    )
+
+
+def _bucket_to_history_point(row: GpuBucketRow) -> GpuHistoryPointOut:
+    """Map a 5m/1h downsample bucket row to a GpuHistoryPointOut."""
+    return GpuHistoryPointOut(
+        bucket_start=_parse_utc(row.bucket_start),
+        avg_util_pct=row.avg_util_pct,
+        avg_mem_pct=row.avg_mem_pct,
+        max_temp_c=row.max_temp_c,
+        max_power_w=row.max_power_w,
+        sample_count=row.sample_count,
+    )
+
+
+@router.get(
+    "/gpu/{server_id}/{gpu_index}/history",
+    response_model=list[GpuHistoryPointOut],
+    summary="GPU metric trend history",
+)
+async def get_gpu_history(
+    server_id: int,
+    gpu_index: int,
+    granularity: Literal["raw", "5m", "1h"] = "5m",
+    since: datetime | None = None,
+    until: datetime | None = None,
+    limit: int = Query(default=200, ge=1, le=2000),
+    gpu_repo: GpuRepository = Depends(get_gpu_repo),  # noqa: B008
+) -> list[GpuHistoryPointOut]:
+    """Return trend points for one GPU card ordered by bucket_start ascending.
+
+    Source table is chosen by ``granularity``:
+        raw — gpu_metrics (per-sample points, sample_count=1)
+        5m  — gpu_metrics_5m (5-minute downsample buckets)  [default]
+        1h  — gpu_metrics_1h (1-hour downsample buckets)
+
+    Defaults: granularity=5m, since=now-24h, limit=200.  ``since``/``until``
+    accept ISO8601; naive values are treated as UTC.  Always HTTP 200; an
+    unknown card simply yields an empty list.
+    """
+    now = datetime.now(UTC)
+    start = _parse_utc(since.isoformat()) if since is not None else now - HISTORY_DEFAULT_WINDOW
+    end = _parse_utc(until.isoformat()) if until is not None else None
+
+    if granularity == "raw":
+        raw_rows = await gpu_repo.get_gpu_history(
+            server_id, gpu_index, since=start, until=end, limit=limit
+        )
+        return [_raw_to_history_point(r) for r in raw_rows]
+
+    if granularity == "5m":
+        bucket_rows = await gpu_repo.get_gpu_history_5m(
+            server_id, gpu_index, since=start, until=end, limit=limit
+        )
+    else:  # "1h"
+        bucket_rows = await gpu_repo.get_gpu_history_1h(
+            server_id, gpu_index, since=start, until=end, limit=limit
+        )
+    return [_bucket_to_history_point(r) for r in bucket_rows]

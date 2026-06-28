@@ -21,10 +21,14 @@ services:
       - .env
     volumes:
       - ./data:/data                                   # SQLite 单文件挂宿主卷
-      # --- 凭证只读挂载(TASK-005):将宿主 ./secrets 目录以只读方式挂入容器 ---
-      # 约定: ./secrets/<name> 对应 PANEL_SECRETS_DIR(默认 /secrets)
-      # 用法示例: read_secret("azure_client_secret") 读取 /secrets/azure_client_secret
-      # - ./secrets:/secrets:ro                        # 凭证只读挂载(ARCH-002 Azure/SSH key)
+      # --- 凭证只读挂载(TASK-005 / TASK-019):宿主 ./secrets 目录以只读挂入容器 ---
+      # 约定: ./secrets/<name> 对应 PANEL_SECRETS_DIR(默认 /secrets)。
+      # 该卷同时承载 (见 docs/deployment/DEPLOY.md §1/§3):
+      #   ./secrets/azure_client_secret → /secrets/azure_client_secret
+      #        (Azure SP password; 对应 PANEL_AZURE_CLIENT_SECRET_FILE)
+      #   ./secrets/id_ed25519          → /secrets/id_ed25519
+      #        (SSH 私钥; 对应 PANEL_SSH_KEY_PATH 及 servers.ssh_key_path)
+      - ./secrets:/secrets:ro                          # 凭证只读挂载(ARCH-002 Azure/SSH key)
       # --- 以下卷由后续模块卡按需启用 ---
       # - /var/run/tailscale:/var/run/tailscale:ro     # Tailscale localapi socket(只读, ARCH-003)
     mem_limit: 512m                                     # Pi5/8GB: 384–512M

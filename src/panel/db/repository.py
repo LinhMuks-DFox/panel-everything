@@ -592,3 +592,29 @@ async def _get_ai_provider_id(self: Repository, provider: str) -> int | None:
 
 
 Repository.get_ai_provider_id = _get_ai_provider_id  # type: ignore[attr-defined]
+
+
+# --------------------------------------------------------------------------- #
+# TASK-040: 通用 metric_history retention — 维护方法
+# --------------------------------------------------------------------------- #
+# 同 Tailscale / AI provider 扩展,采用 setattr 注入而不改类体封口处。
+
+
+async def _prune_history(self: Repository, before: datetime) -> int:
+    """删除 metric_history 中 collected_at 早于 before 的行(严格小于)。
+
+    collected_at 以 ISO8601 UTC 字符串存储(字典序与时间序一致),before 经 _iso()
+    归一化为同一格式后比较。一次 commit。
+
+    Returns:
+        删除的行数(cursor.rowcount)。
+    """
+    cur = await self._conn.execute(
+        "DELETE FROM metric_history WHERE collected_at < ?",
+        (_iso(before),),
+    )
+    await self._conn.commit()
+    return cur.rowcount
+
+
+Repository.prune_history = _prune_history  # type: ignore[attr-defined]

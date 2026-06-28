@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     # (endpoint accepts any request). Set via PANEL_INGEST_TOKEN to require a token.
     ingest_token: str = ""
 
+    # --- History retention (ARCH-001 Addendum / TASK-040) ---
+    # Rows in metric_history older than this many days are pruned by the daily
+    # retention job. Set via PANEL_HISTORY_RETENTION_DAYS.
+    history_retention_days: int = 30
+
 
 def read_secret(name_or_path: str, settings: Settings | None = None) -> str:
     """Read a secret value from the secrets directory or an absolute path.

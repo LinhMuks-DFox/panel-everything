@@ -24,6 +24,8 @@ from panel.api.azure import router as azure_router
 from panel.api.ingest import router as ingest_router
 from panel.api.tailscale.routes import router as tailscale_router
 from panel.collectors import register_collectors
+from panel.collectors.gpu.downsampler import run_1h_downsample, run_5m_downsample
+from panel.collectors.retention import prune_metric_history
 from panel.collectors.scheduler import build_scheduler
 from panel.config.scrub import setup_logging
 from panel.config.settings import Settings, get_settings
@@ -75,6 +77,29 @@ async def lifespan(app: FastAPI):  # noqa: ANN201 (asynccontextmanager 推断返
     # 先集中注册各模块采集器(azure/gpu/...,各工厂按配置自行启停),再读 registry 装配调度。
     register_collectors(settings, app.state.repo, app.state.gpu_repo)
     scheduler = build_scheduler(app.state.repo)
+    # --- TASK-016: GPU 历史降采样 job(5min / 1h) ---
+    scheduler.add_job(
+        run_5m_downsample,
+        "interval",
+        minutes=5,
+        args=[app.state.gpu_repo],
+        id="gpu_downsample_5m",
+    )
+    scheduler.add_job(
+        run_1h_downsample,
+        "interval",
+        hours=1,
+        args=[app.state.gpu_repo],
+        id="gpu_downsample_1h",
+    )
+    # --- TASK-040: 通用 metric_history retention job(每日) ---
+    scheduler.add_job(
+        prune_metric_history,
+        "interval",
+        days=1,
+        args=[app.state.repo, settings.history_retention_days],
+        id="metric_history_retention",
+    )
     scheduler.start()
     app.state.scheduler = scheduler
 

@@ -70,6 +70,23 @@ class GpuMetricRow:
     collected_at: str  # ISO8601 UTC
 
 
+@dataclass(slots=True)
+class GpuBucketRow:
+    """gpu_metrics_5m / gpu_metrics_1h 的降采样桶行 (TASK-016).
+
+    两张降采样表列结构相同,共用同一行类型。
+    """
+
+    server_id: int
+    gpu_index: int
+    avg_util_pct: float | None
+    avg_mem_pct: float | None
+    max_temp_c: float | None
+    max_power_w: float | None
+    sample_count: int
+    bucket_start: str  # ISO8601 UTC,粒度对齐
+
+
 # --------------------------------------------------------------------------- #
 # GpuSample — 采集器内部传输对象(ARCH-002 / collectors/gpu/collector.py 使用)
 # --------------------------------------------------------------------------- #
@@ -362,6 +379,188 @@ class GpuRepository:
         ) as cur:
             return [self._to_gpu_metric(r) async for r in cur]
 
+    # ----------------------------------------------- gpu_metrics_5m / _1h #
+    # TASK-016 降采样读写。两张表列结构一致,upsert 走 UNIQUE
+    # (server_id, gpu_index, bucket_start) 索引的 INSERT OR REPLACE。
+
+    async def upsert_5m_bucket(self, row: GpuBucketRow) -> None:
+        """按 (server_id, gpu_index, bucket_start) UPSERT 一个 5min 降采样桶。"""
+        await self._upsert_bucket("gpu_metrics_5m", row)
+
+    async def upsert_1h_bucket(self, row: GpuBucketRow) -> None:
+        """按 (server_id, gpu_index, bucket_start) UPSERT 一个 1h 降采样桶。"""
+        await self._upsert_bucket("gpu_metrics_1h", row)
+
+    async def _upsert_bucket(self, table: str, row: GpuBucketRow) -> None:
+        """两张降采样表共用的 INSERT OR REPLACE 实现。
+
+        table 仅取自模块内常量字符串,不来自外部输入,无注入面。
+        REPLACE 会换新 id(AUTOINCREMENT),但桶以唯一索引去重,id 非业务键。
+        """
+        await self._conn.execute(
+            f"""
+            INSERT OR REPLACE INTO {table}
+                (server_id, gpu_index, avg_util_pct, avg_mem_pct,
+                 max_temp_c, max_power_w, sample_count, bucket_start)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,  # noqa: S608
+            (
+                row.server_id,
+                row.gpu_index,
+                row.avg_util_pct,
+                row.avg_mem_pct,
+                row.max_temp_c,
+                row.max_power_w,
+                row.sample_count,
+                row.bucket_start,
+            ),
+        )
+        await self._conn.commit()
+
+    async def get_gpu_history_5m(
+        self,
+        server_id: int,
+        gpu_index: int,
+        since: datetime,
+        until: datetime | None = None,
+        limit: int = 200,
+    ) -> list[GpuBucketRow]:
+        """按时间范围查某卡 5min 降采样桶(bucket_start 升序)。"""
+        return await self._get_history_bucket(
+            "gpu_metrics_5m", server_id, gpu_index, since, until, limit
+        )
+
+    async def get_gpu_history_1h(
+        self,
+        server_id: int,
+        gpu_index: int,
+        since: datetime,
+        until: datetime | None = None,
+        limit: int = 200,
+    ) -> list[GpuBucketRow]:
+        """按时间范围查某卡 1h 降采样桶(bucket_start 升序)。"""
+        return await self._get_history_bucket(
+            "gpu_metrics_1h", server_id, gpu_index, since, until, limit
+        )
+
+    async def _get_history_bucket(
+        self,
+        table: str,
+        server_id: int,
+        gpu_index: int,
+        since: datetime,
+        until: datetime | None,
+        limit: int,
+    ) -> list[GpuBucketRow]:
+        """两张降采样表共用的区间查询。
+
+        内层 DESC+LIMIT 取最近 limit 桶,外层 ASC 呈现,与 get_gpu_history 一致。
+        """
+        params: list[object] = [server_id, gpu_index, _iso(since)]
+        upper = ""
+        if until is not None:
+            upper = " AND bucket_start <= ?"
+            params.append(_iso(until))
+        params.append(limit)
+        async with self._conn.execute(
+            f"""
+            SELECT server_id, gpu_index, avg_util_pct, avg_mem_pct,
+                   max_temp_c, max_power_w, sample_count, bucket_start
+            FROM (
+                SELECT server_id, gpu_index, avg_util_pct, avg_mem_pct,
+                       max_temp_c, max_power_w, sample_count, bucket_start
+                FROM {table}
+                WHERE server_id = ? AND gpu_index = ?
+                      AND bucket_start >= ?{upper}
+                ORDER BY bucket_start DESC
+                LIMIT ?
+            )
+            ORDER BY bucket_start ASC
+            """,  # noqa: S608
+            params,
+        ) as cur:
+            return [self._to_bucket(r) async for r in cur]
+
+    # -------------------------------------------------- 降采样聚合源查询 #
+    # TASK-016 job 用:对一个时间窗内的源数据按 (server_id, gpu_index) 聚合。
+
+    async def aggregate_raw_buckets(
+        self, since: datetime, until: datetime
+    ) -> list[tuple[int, int, float | None, float | None, float | None, float | None, int]]:
+        """从 gpu_metrics 聚合 [since, until) 窗口,按卡分组。
+
+        返回 (server_id, gpu_index, avg_util, avg_mem, max_temp, max_power, count)。
+        仅统计 status='ok' 的行(unreachable/error 行的数值列为 NULL,不应污染均值)。
+        """
+        return await self._aggregate(
+            "gpu_metrics", "util_pct", "mem_pct", since, until
+        )
+
+    async def aggregate_5m_buckets(
+        self, since: datetime, until: datetime
+    ) -> list[tuple[int, int, float | None, float | None, float | None, float | None, int]]:
+        """从 gpu_metrics_5m 聚合 [since, until) 窗口为 1h 桶,按卡分组。
+
+        sample_count 用 SUM(原桶 sample_count),反映底层原始样本总数。
+        """
+        async with self._conn.execute(
+            """
+            SELECT server_id, gpu_index,
+                   AVG(avg_util_pct), AVG(avg_mem_pct),
+                   MAX(max_temp_c), MAX(max_power_w),
+                   COALESCE(SUM(sample_count), 0)
+            FROM gpu_metrics_5m
+            WHERE bucket_start >= ? AND bucket_start < ?
+            GROUP BY server_id, gpu_index
+            """,
+            (_iso(since), _iso(until)),
+        ) as cur:
+            return [tuple(r) async for r in cur]  # type: ignore[misc]
+
+    async def _aggregate(
+        self,
+        table: str,
+        util_col: str,
+        mem_col: str,
+        since: datetime,
+        until: datetime,
+    ) -> list[tuple[int, int, float | None, float | None, float | None, float | None, int]]:
+        """gpu_metrics 原始表聚合实现(只计 status='ok')。"""
+        async with self._conn.execute(
+            f"""
+            SELECT server_id, gpu_index,
+                   AVG({util_col}), AVG({mem_col}),
+                   MAX(temp_c), MAX(power_w),
+                   COUNT(*)
+            FROM {table}
+            WHERE collected_at >= ? AND collected_at < ?
+                  AND status = 'ok'
+            GROUP BY server_id, gpu_index
+            """,  # noqa: S608
+            (_iso(since), _iso(until)),
+        ) as cur:
+            return [tuple(r) async for r in cur]  # type: ignore[misc]
+
+    # ------------------------------------------------------ retention 清理 #
+
+    async def delete_raw_metrics_before(self, cutoff: datetime) -> int:
+        """删除 gpu_metrics 中 collected_at < cutoff 的行,返回删除行数。"""
+        cur = await self._conn.execute(
+            "DELETE FROM gpu_metrics WHERE collected_at < ?",
+            (_iso(cutoff),),
+        )
+        await self._conn.commit()
+        return cur.rowcount or 0
+
+    async def delete_5m_buckets_before(self, cutoff: datetime) -> int:
+        """删除 gpu_metrics_5m 中 bucket_start < cutoff 的桶,返回删除行数。"""
+        cur = await self._conn.execute(
+            "DELETE FROM gpu_metrics_5m WHERE bucket_start < ?",
+            (_iso(cutoff),),
+        )
+        await self._conn.commit()
+        return cur.rowcount or 0
+
     # ---------------------------------------------------------------- mappers #
 
     @staticmethod
@@ -407,4 +606,17 @@ class GpuRepository:
             power_w=row["power_w"],
             status=row["status"],
             collected_at=row["collected_at"],
+        )
+
+    @staticmethod
+    def _to_bucket(row: aiosqlite.Row) -> GpuBucketRow:
+        return GpuBucketRow(
+            server_id=row["server_id"],
+            gpu_index=row["gpu_index"],
+            avg_util_pct=row["avg_util_pct"],
+            avg_mem_pct=row["avg_mem_pct"],
+            max_temp_c=row["max_temp_c"],
+            max_power_w=row["max_power_w"],
+            sample_count=row["sample_count"],
+            bucket_start=row["bucket_start"],
         )

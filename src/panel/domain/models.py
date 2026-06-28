@@ -133,6 +133,25 @@ class CollectorStatusOut(PublicModel):
     error: str | None
 
 
+# === ARCH-002 GPU 趋势 ===
+
+
+class GpuHistoryPointOut(PublicModel):
+    """单张 GPU 卡某时间桶的趋势数据点 (TASK-016).
+
+    供 GET /api/v1/gpu/{server_id}/{gpu_index}/history 返回，按 bucket_start
+    升序排列。raw 粒度下 bucket_start 即原始采集时刻，avg_* 为单点原值、
+    max_* 同值、sample_count=1；5m/1h 粒度下为降采样聚合值。
+    """
+
+    bucket_start: datetime
+    avg_util_pct: float | None
+    avg_mem_pct: float | None
+    max_temp_c: float | None
+    max_power_w: float | None
+    sample_count: int
+
+
 class DashboardVmOut(VmStatusOut):
     """Dashboard 中单台 VM 条目,内嵌该机各 GPU 卡最新指标."""
 
