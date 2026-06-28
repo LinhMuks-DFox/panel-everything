@@ -591,3 +591,219 @@
     startAiCountdown();
   }
 })();
+
+// ── TASK-017: GPU 历史趋势迷你图 (ARCH-002) ───────────────────────────────
+//
+// 每个 GpuCard 内有一个 <details class="gpu-trend">，默认折叠。用户展开时
+// (toggle 事件且 details.open=true) 才懒加载 GET /api/v1/gpu/{id}/{idx}/history
+// 并用纯 Canvas 2D 画一条折线图——无外部库、无动画 (一次性绘制即止)。
+//
+// e-ink 降级：prefers-color-scheme: no-preference 时退化为单色黑线，
+// 不依赖颜色传递信息；阈值额外用线宽区分。
+//
+// 命名一律 gpuTrend 前缀，避免与上方 azure / tailscale / aiUsage 模块冲突。
+// 优雅降级：任意 fetch/解析错误都吞掉并显示「加载失败」，SSR DOM 不受影响。
+(function () {
+  "use strict";
+
+  var GPU_TREND_GRANULARITY = "5m";
+  var GPU_TREND_LIMIT = 144; // 12h × 12 个 5min 桶
+  var GPU_TREND_FIELD = "avg_util_pct";
+
+  /** 是否处于 e-ink / 灰度降级模式（无颜色偏好）。 */
+  function gpuTrendIsEink() {
+    return (
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: no-preference)").matches
+    );
+  }
+
+  /**
+   * 根据利用率阈值返回 {color, width}。
+   * e-ink 模式：颜色恒为黑，靠线宽区分 (>90 粗 / >70 中 / 其他细)。
+   * 彩色模式：>90 红、>70 橙、其他绿；线宽固定 1.5。
+   */
+  function gpuTrendStrokeFor(maxVal, eink) {
+    if (eink) {
+      var w = 1;
+      if (maxVal >= 90) w = 2.5;
+      else if (maxVal >= 70) w = 1.75;
+      return { color: "#000", width: w };
+    }
+    var color = "#2e7d32"; // 绿
+    if (maxVal >= 90) color = "#c62828"; // 红
+    else if (maxVal >= 70) color = "#ef6c00"; // 橙
+    return { color: color, width: 1.5 };
+  }
+
+  /**
+   * 纯 Canvas 2D 折线图。无外部依赖、无 requestAnimationFrame 循环、无动画。
+   * 空数组 / 全空字段 → 不绘制，交由调用方显示「暂无历史数据」。
+   *
+   * @param {HTMLCanvasElement} canvas
+   * @param {Array} points  history API 返回的数据点
+   * @param {string} field  取哪个字段（默认 avg_util_pct）
+   * @returns {boolean}  true=已绘制；false=无可绘制数据
+   */
+  function gpuTrendDrawMiniChart(canvas, points, field) {
+    if (!canvas || typeof canvas.getContext !== "function") return false;
+    var ctx = canvas.getContext("2d");
+    if (!ctx) return false;
+
+    var key = field || GPU_TREND_FIELD;
+
+    // 宽度自适应容器；高度固定。
+    var parent = canvas.parentNode;
+    var w = (parent && parent.offsetWidth) || canvas.width || 280;
+    var h = canvas.height || 60;
+    canvas.width = w;
+    canvas.height = h;
+
+    ctx.clearRect(0, 0, w, h);
+
+    if (!points || !points.length) return false;
+
+    // 抽取有效数值（百分比 0–100），保留索引以等距铺开 x。
+    var vals = [];
+    for (var i = 0; i < points.length; i++) {
+      var v = points[i] ? points[i][key] : null;
+      vals.push(typeof v === "number" && isFinite(v) ? v : null);
+    }
+    var hasAny = false;
+    var maxVal = 0;
+    for (var j = 0; j < vals.length; j++) {
+      if (vals[j] !== null) {
+        hasAny = true;
+        if (vals[j] > maxVal) maxVal = vals[j];
+      }
+    }
+    if (!hasAny) return false;
+
+    var pad = 2;
+    var plotH = h - pad * 2;
+    var n = vals.length;
+    // 固定 0–100 百分比刻度，避免单点时除零。
+    function xAt(idx) {
+      return n <= 1 ? w / 2 : pad + (idx / (n - 1)) * (w - pad * 2);
+    }
+    function yAt(val) {
+      var clamped = val < 0 ? 0 : val > 100 ? 100 : val;
+      return pad + (1 - clamped / 100) * plotH;
+    }
+
+    var eink = gpuTrendIsEink();
+    var stroke = gpuTrendStrokeFor(maxVal, eink);
+
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.lineWidth = stroke.width;
+    ctx.strokeStyle = stroke.color;
+
+    ctx.beginPath();
+    var started = false;
+    for (var k = 0; k < n; k++) {
+      if (vals[k] === null) continue; // 跳过缺口（断线）
+      var x = xAt(k);
+      var y = yAt(vals[k]);
+      if (!started) {
+        ctx.moveTo(x, y);
+        started = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+    return true;
+  }
+
+  /** 构造 history API URL。 */
+  function gpuTrendUrl(serverId, gpuIndex) {
+    return (
+      "/api/v1/gpu/" +
+      encodeURIComponent(serverId) +
+      "/" +
+      encodeURIComponent(gpuIndex) +
+      "/history?granularity=" +
+      GPU_TREND_GRANULARITY +
+      "&limit=" +
+      GPU_TREND_LIMIT
+    );
+  }
+
+  /** 在某个 details 块内设置状态文本（加载中 / 暂无 / 失败）。 */
+  function gpuTrendSetStatus(details, text) {
+    var status = details.querySelector(".gpu-trend-status");
+    if (status) {
+      status.textContent = text;
+      status.hidden = false;
+    }
+  }
+
+  function gpuTrendHideStatus(details) {
+    var status = details.querySelector(".gpu-trend-status");
+    if (status) status.hidden = true;
+  }
+
+  /**
+   * 处理单个 details 的 toggle：仅在展开 (open) 且尚未加载过时拉取数据。
+   * 每张卡各自独立——只操作自身 details 内的 canvas / 状态节点。
+   */
+  function gpuTrendHandleToggle(details) {
+    if (!details.open) return;
+    if (details.dataset.gpuTrendLoaded === "1") return; // 只加载一次
+    details.dataset.gpuTrendLoaded = "1";
+
+    var serverId = details.dataset.serverId;
+    var gpuIndex = details.dataset.gpuIndex;
+    var canvas = details.querySelector("canvas.trend-canvas");
+
+    gpuTrendSetStatus(details, "加载中…");
+
+    fetch(gpuTrendUrl(serverId, gpuIndex), {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout ? AbortSignal.timeout(10000) : undefined,
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        var drawn = gpuTrendDrawMiniChart(canvas, data, GPU_TREND_FIELD);
+        if (drawn) {
+          gpuTrendHideStatus(details);
+        } else {
+          gpuTrendSetStatus(details, "暂无历史数据");
+        }
+      })
+      .catch(function () {
+        // 允许下次重新展开时再试
+        details.dataset.gpuTrendLoaded = "";
+        gpuTrendSetStatus(details, "加载失败");
+      });
+  }
+
+  /** 给所有 .gpu-trend 绑定一次 toggle 监听（幂等：跳过已绑定的）。 */
+  function gpuTrendBindAll() {
+    var blocks = document.querySelectorAll(".gpu-trend");
+    for (var i = 0; i < blocks.length; i++) {
+      var details = blocks[i];
+      if (details.dataset.gpuTrendBound === "1") continue;
+      details.dataset.gpuTrendBound = "1";
+      details.addEventListener(
+        "toggle",
+        (function (d) {
+          return function () {
+            gpuTrendHandleToggle(d);
+          };
+        })(details)
+      );
+    }
+  }
+
+  // 暴露绘制函数供测试与潜在复用（不影响 IIFE 封装的其余内部状态）。
+  window.gpuTrendDrawMiniChart = gpuTrendDrawMiniChart;
+
+  // ── Bootstrap ─────────────────────────────────────────────────────────
+  gpuTrendBindAll();
+})();

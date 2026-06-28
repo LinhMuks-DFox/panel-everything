@@ -110,6 +110,18 @@
               {% endif %}
             </div>
 
+            {# ── GPU 历史趋势迷你图 (TASK-017) ──────────────────────────────── #}
+            {# 原生 <details>/<summary> 折叠，默认折叠；JS 仅在 toggle 时懒加载。 #}
+            <details class="gpu-trend" data-server-id="{{ gpu.server_id }}"
+                     data-gpu-index="{{ gpu.gpu_index }}">
+              <summary class="gpu-trend-toggle">历史趋势</summary>
+              <div class="gpu-trend-chart">
+                <p class="gpu-trend-status" role="status">展开以加载历史数据</p>
+                <canvas class="trend-canvas" width="280" height="60"
+                        aria-label="GPU {{ gpu.gpu_index }} 利用率趋势图"></canvas>
+              </div>
+            </details>
+
           {% else %}
             {# ── Unreachable GPU ───────────────────────────────────────────── #}
             <div class="gpu-unreachable">

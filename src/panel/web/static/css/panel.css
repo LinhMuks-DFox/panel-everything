@@ -1034,3 +1034,68 @@ a:focus-visible {
 }
 
 /* ── End AI 额度 ────────────────────────────────────────────────────────────── */
+
+
+/* ── GPU 趋势 ──────────────────────────────────────────────────────────────────
+   TASK-017 / ARCH-002：GpuCard 内可折叠的历史趋势迷你图。
+   e-ink 硬约束：无投影、无动画、无过渡、无关键帧。
+   原生 <details>/<summary> 折叠，纯 Canvas 折线，灰度单色降级。
+*/
+.gpu-trend {
+  margin-top: 0.4rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.3rem;
+}
+
+.gpu-trend-toggle {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--text-sub);
+  list-style: none;          /* 隐藏默认三角，下面用 ::before 自绘 */
+  user-select: none;
+}
+
+.gpu-trend-toggle::-webkit-details-marker {
+  display: none;             /* Safari/WebKit 默认 marker */
+}
+
+/* 用纯字符箭头表示折叠/展开态（无颜色依赖，e-ink 友好）。 */
+.gpu-trend-toggle::before {
+  content: "▶ ";
+  font-size: 0.7rem;
+}
+
+.gpu-trend[open] > .gpu-trend-toggle::before {
+  content: "▼ ";
+}
+
+.gpu-trend-chart {
+  margin-top: 0.3rem;
+}
+
+.gpu-trend-status {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+/* 状态文本可见时隐藏 canvas，反之亦然——靠 [hidden] 属性切换，无脚本依赖。 */
+.gpu-trend-status[hidden] {
+  display: none;
+}
+
+.trend-canvas {
+  display: block;
+  width: 100%;
+  height: 60px;
+  max-width: 100%;
+}
+
+/* e-ink / 打印：去边框装饰，画布背景留白即可。 */
+@media print {
+  .gpu-trend {
+    border-top: 1px solid #000;
+  }
+}
+
+/* ── End GPU 趋势 ───────────────────────────────────────────────────────────── */
