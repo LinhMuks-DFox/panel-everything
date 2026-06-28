@@ -20,11 +20,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from panel.api import health
+from panel.api.azure import router as azure_router
 from panel.collectors import register_collectors
 from panel.collectors.scheduler import build_scheduler
 from panel.config.scrub import setup_logging
 from panel.config.settings import Settings, get_settings
 from panel.db import connection, migrate
+from panel.db.gpu_repository import GpuRepository
 from panel.db.repository import Repository
 from panel.web import routes as web_routes
 
@@ -53,7 +55,8 @@ async def lifespan(app: FastAPI):  # noqa: ANN201 (asynccontextmanager 推断返
     # scheduler.shutdown(wait=False)
     # await conn.close()
     """
-    settings = get_settings()
+    # Use pre-injected settings if create_app stored them (e.g. in tests), else fall back.
+    settings = getattr(app.state, "settings", None) or get_settings()
     # Expose settings on app.state so request handlers (e.g. SSR routes reading
     # stale_threshold_seconds) can pick up config rather than falling back to defaults.
     app.state.settings = settings
@@ -63,6 +66,8 @@ async def lifespan(app: FastAPI):  # noqa: ANN201 (asynccontextmanager 推断返
     await migrate.run(conn)  # 幂等建表
     app.state.db = conn
     app.state.repo = Repository(conn)
+    # --- TASK-011: GpuRepository 初始化(ARCH-002 专用表) ---
+    app.state.gpu_repo = GpuRepository(conn)
 
     # --- TASK-003: 采集器注册 + scheduler 启停 ---
     # 先集中注册各模块采集器(本期为空占位),再读 registry 装配调度。
@@ -94,6 +99,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    # Pre-store settings on app.state so lifespan can pick up injected settings
+    # (e.g. test-specific db_path) without changing the lifespan signature.
+    app.state.settings = resolved
 
     # --- TASK-004: 静态资源挂载 ---
     from pathlib import Path
@@ -106,7 +114,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- 路由集中挂载 ---
     app.include_router(health.router)
     app.include_router(web_routes.router)          # TASK-004: SSR GET /
-    # ARCH-002/003: 各模块在此集中 include_router(...)。
+    app.include_router(azure_router)               # TASK-011: /api/v1/servers
+    # ARCH-003/004: 各模块在此集中 include_router(...)。
 
     return app
 

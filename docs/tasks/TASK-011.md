@@ -1,12 +1,12 @@
 ---
 id: TASK-011
 title: "服务器注册 CRUD API（凭证不回传）"
-status: todo
+status: review
 priority: P1
 architecture: ARCH-002
 dependencies: [TASK-010, TASK-005]
 estimated_effort: M
-executed_by:
+executed_by: claude-sonnet-4-6
 created: 2026-06-28
 updated: 2026-06-28
 ---
