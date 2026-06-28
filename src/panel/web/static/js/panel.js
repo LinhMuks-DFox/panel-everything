@@ -491,3 +491,103 @@
     startAzurePolling();
   }
 })();
+
+// ── TASK-033: AI 额度卡片 — resets_at 倒计时 + 阈值变色属性 (ARCH-004) ──────
+//
+// 1. resets_at 倒计时：找所有 [data-countdown] 元素，每分钟刷新显示
+//    「Xh Ym 后重置」；到期显示「已重置」。
+// 2. 阈值变色属性：根据进度条 aria-valuenow 在 section 上动态加 data-pct-warn
+//    (>70) / data-pct-error (>90)，配合 CSS @media (color) 变色。
+// 3. Page Visibility：页面不可见时暂停倒计时（CPU≈0，REQ-001），可见时立即刷新。
+//
+// 命名以 aiUsage 前缀，避免与上方 azure / tailscale 模块的同名变量冲突。
+// Graceful degradation：无任何 AI 卡片时不做任何事。
+(function () {
+  "use strict";
+
+  var AI_COUNTDOWN_MS = 60000; // 1 min
+  var aiCountdownTimerId = null;
+  var aiCountdownRunning = false;
+
+  /** 把毫秒差格式化为「Xh Ym 后重置」/「Ym 后重置」/「已重置」。 */
+  function aiUsageFormatRemaining(diffMs) {
+    if (diffMs <= 0) return "已重置";
+    var totalMin = Math.floor(diffMs / 60000);
+    var h = Math.floor(totalMin / 60);
+    var m = totalMin % 60;
+    if (h > 0) return h + "h " + m + "m 后重置";
+    return m + "m 后重置";
+  }
+
+  /** 刷新所有倒计时元素的显示文本。 */
+  function aiUsageUpdateCountdowns() {
+    var els = document.querySelectorAll("[data-countdown]");
+    for (var i = 0; i < els.length; i++) {
+      var raw = els[i].dataset.countdown;
+      var t = new Date(raw);
+      if (isNaN(t.getTime())) continue; // 无法解析则保留 SSR 文本
+      els[i].textContent = aiUsageFormatRemaining(t.getTime() - Date.now());
+    }
+  }
+
+  /**
+   * 依据进度条 aria-valuenow 在所属 AI 卡片 section 上标注 data-pct-warn/error。
+   * SSR 已根据后端值预置这两个属性；此处在客户端再校准一次，保证 JS 渲染/
+   * 局部刷新后阈值变色仍正确。
+   */
+  function aiUsageApplyThresholdAttrs() {
+    var bars = document.querySelectorAll(
+      '[data-module="ai-usage"] .ai-metric-bar[aria-valuenow]'
+    );
+    for (var i = 0; i < bars.length; i++) {
+      var section = bars[i].closest('[data-module="ai-usage"]');
+      if (!section) continue;
+      var pct = parseFloat(bars[i].getAttribute("aria-valuenow"));
+      section.removeAttribute("data-pct-warn");
+      section.removeAttribute("data-pct-error");
+      if (!isNaN(pct)) {
+        if (pct >= 90) {
+          section.setAttribute("data-pct-error", "");
+        } else if (pct >= 70) {
+          section.setAttribute("data-pct-warn", "");
+        }
+      }
+    }
+  }
+
+  function aiUsageTick() {
+    aiUsageUpdateCountdowns();
+    aiUsageApplyThresholdAttrs();
+  }
+
+  function startAiCountdown() {
+    if (aiCountdownRunning) return;
+    aiCountdownRunning = true;
+    aiCountdownTimerId = setInterval(aiUsageUpdateCountdowns, AI_COUNTDOWN_MS);
+  }
+
+  function stopAiCountdown() {
+    if (!aiCountdownRunning) return;
+    aiCountdownRunning = false;
+    if (aiCountdownTimerId !== null) {
+      clearInterval(aiCountdownTimerId);
+      aiCountdownTimerId = null;
+    }
+  }
+
+  // ── Page Visibility integration (mirrors outer ARCH-001 loop) ───────────
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      stopAiCountdown();
+    } else {
+      aiUsageTick(); // immediate refresh on tab return
+      startAiCountdown();
+    }
+  });
+
+  // ── Bootstrap ─────────────────────────────────────────────────────────
+  aiUsageTick(); // initial render (also re-derives threshold attrs)
+  if (!document.hidden) {
+    startAiCountdown();
+  }
+})();

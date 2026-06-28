@@ -1,0 +1,83 @@
+{#
+  _ai_card.html — TASK-033 / ARCH-004
+  AI 额度卡片：每个 provider 一张独立卡。
+
+  Context variables (injected by web/routes.py index handler):
+    ai_providers   list[AiProviderStatus]  — 来自 api.ai_usage.get_ai_usage_data
+
+  Jinja2 globals registered in routes.py:
+    ai_status_class(p)    → "ok" / "warn" / "error" / "stale" / "nodata"
+    ai_status_symbol(p)   → "●" / "◐" / "●" / "○" / "◌"
+    ai_pct_warn(p)        → bool  (used_percent ≥ 70 且 < 90)
+    ai_pct_error(p)       → bool  (used_percent ≥ 90)
+
+  Three-layer state encoding (color + shape + text) on the status dot.
+  e-ink safe: no box-shadow, no animation, no transition. 阈值变色用
+  data-pct-warn/error 属性 + @media (color) 包裹，灰度设备只见深灰进度条。
+#}
+
+{% if ai_providers %}
+{% for p in ai_providers %}
+<section class="card" data-module="ai-usage" data-provider="{{ p.provider }}"
+         {% if ai_pct_warn(p) %}data-pct-warn{% endif %}
+         {% if ai_pct_error(p) %}data-pct-error{% endif %}>
+
+  {# ── Header: status dot + name + manual badge ─────────────────────────── #}
+  <div class="card-header ai-card__header">
+    <span class="status-dot status-{{ ai_status_class(p) }}"
+          aria-label="{{ p.status }}">{{ ai_status_symbol(p) }}</span>
+    <h2 class="ai-card__name">{{ p.display_name }}</h2>
+    {% if p.source_type == 'manual' %}
+    <span class="badge badge-manual" title="此 provider 需手动更新数据">◌ 手动</span>
+    {% endif %}
+  </div>
+
+  {% if p.status == 'no_data' %}
+  {# ── 空卡：provider 配置存在但从未收到上报 ───────────────────────────── #}
+  <p class="ai-card__nodata">尚未收到数据，请确认 Reporter 已部署。</p>
+
+  {% else %}
+  {# ── Stale 横幅 ─────────────────────────────────────────────────────── #}
+  {% if p.stale %}
+  <div class="datasource-banner ai-card__stale" role="alert">
+    <span class="status-dot status-stale" aria-hidden="true">○</span>
+    数据可能过旧（上次更新 {{ p.stale_age_label or '—' }} 前）
+  </div>
+  {% endif %}
+
+  {# ── 用量进度条 ─────────────────────────────────────────────────────── #}
+  {% if p.used_percent is not none %}
+  <div class="metric-bar-wrap">
+    <div class="metric-bar ai-metric-bar" role="progressbar"
+         aria-valuenow="{{ p.used_percent | round(1) }}"
+         aria-valuemin="0" aria-valuemax="100"
+         aria-label="用量 {{ p.used_percent | round(1) }}%"
+         style="--pct: {{ p.used_percent | round(1) }}%"></div>
+    <span class="metric-bar-label ai-metric-bar-label">
+      {{ p.used_percent | round(1) }}%
+      {% if p.used_value is not none and p.limit_value is not none %}
+        （{{ p.used_value | int }} / {{ p.limit_value | int }} {{ p.metric_unit }}）
+      {% elif p.used_value is not none and p.metric_unit != 'unknown' %}
+        （{{ p.used_value | int }} {{ p.metric_unit }}）
+      {% endif %}
+    </span>
+  </div>
+  {% else %}
+  <p class="metric-unknown">用量未知{% if p.source_type == 'manual' %}（请手动更新）{% endif %}</p>
+  {% endif %}
+
+  {# ── 窗口重置倒计时 ─────────────────────────────────────────────────── #}
+  {% if p.resets_at %}
+  <p class="resets-at">
+    窗口重置：<time datetime="{{ p.resets_at }}"
+                    data-countdown="{{ p.resets_at }}">{{ p.resets_at }}</time>
+    <span class="window-label">（{{ p.window_label }}）</span>
+  </p>
+  {% endif %}
+
+  <p class="collected-at">数据时间：{{ p.collected_at or '—' }}</p>
+  {% endif %}
+
+</section>
+{% endfor %}
+{% endif %}

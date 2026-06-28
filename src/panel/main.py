@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from panel.api import health
+from panel.api.ai_usage import router as ai_usage_router
 from panel.api.azure import router as azure_router
 from panel.api.ingest import router as ingest_router
 from panel.api.tailscale.routes import router as tailscale_router
@@ -144,6 +145,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(azure_router)               # TASK-011: /api/v1/servers
     app.include_router(tailscale_router)           # TASK-021: /api/tailscale
     app.include_router(ingest_router)              # TASK-030: /api/ingest/ai-usage
+    app.include_router(ai_usage_router)            # TASK-033: GET /api/ai-usage
     # ARCH-004: 各模块在此集中 include_router(...)。
 
     return app

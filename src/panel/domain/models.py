@@ -237,3 +237,42 @@ class AiUsagePayload(BaseModel):
     provider: str
     metrics: list[AiMetricItem]
     status: Literal["ok", "error"] = "ok"
+
+
+# === ARCH-004 AI 额度展示 ===
+# 前端 AI 额度卡片(TASK-033)的对外响应模型。继承 PublicModel(白名单 +
+# extra="forbid")。API 层(api/ai_usage.py)负责把 latest_snapshot 的原始
+# 指标(used_requests/used_tokens/used_percent/resets_at/...)聚合并统一成
+# used_value + metric_unit,模板只消费这些已算好的字段。
+
+
+class AiProviderStatus(PublicModel):
+    """单个 AI provider 的最新用量状态(供 _ai_card.html 渲染一张卡)。
+
+    used_value / limit_value 由 API 层从 used_requests/used_tokens 与
+    limit_requests/limit_tokens 统一而来;metric_unit 标明单位。
+    stale 为读时派生:数据超过 window_seconds*0.5 或上报 status='error'。
+    no_data:provider 配置存在但从未收到上报。
+    """
+
+    provider: str
+    display_name: str
+    source_type: str               # 'local_jsonl' | 'oauth_api' | 'manual'
+    used_percent: float | None
+    used_value: float | None       # used_requests 或 used_tokens(取到哪个用哪个)
+    limit_value: float | None
+    metric_unit: str               # 'requests' | 'tokens' | 'unknown'
+    resets_at: str | None          # ISO8601 UTC
+    window_label: str              # 如 '5h 窗口'
+    stale: bool
+    stale_since: str | None        # collected_at ISO8601,stale=True 时填
+    stale_age_label: str | None    # 如 '2h 15m',stale=True 时填(后端预算)
+    collected_at: str | None       # ISO8601 UTC,no_data 时为 None
+    status: str                    # 'ok' | 'error' | 'no_data'
+
+
+class AiUsageResponse(PublicModel):
+    """GET /api/ai-usage 聚合响应体。"""
+
+    providers: list[AiProviderStatus]
+    last_updated: str | None       # 最新一条 collected_at;无数据则 None

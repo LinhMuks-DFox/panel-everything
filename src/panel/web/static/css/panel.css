@@ -896,3 +896,141 @@ a:focus-visible {
 }
 
 /* ── End 服务器注册管理页 ─────────────────────────────────────────────────────── */
+
+
+/* ── AI 额度 ──────────────────────────────────────────────────────────────────
+ * TASK-033 / ARCH-004 — AI provider 用量卡片。
+ *
+ * e-ink 硬约束：无投影、无动画/过渡、无关键帧。
+ * 进度条填充用静态深灰(灰度可见)；阈值变色仅在彩色设备生效，整体包在
+ * @media (color) 内，e-ink/灰度设备永远只见深灰条。
+ * 状态符 ●◐○◌ + 文本，颜色绝不作为唯一指示。
+ */
+
+.ai-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.ai-card__name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text);
+}
+
+/* no_data 状态符 — 中性灰(同 stale 调性) */
+.status-dot.status-nodata { color: var(--stale); }
+
+/* 手动更新徽标 — 边框 + currentColor，无颜色依赖 */
+.badge-manual {
+  font-size: 0.7em;
+  border: 1px solid currentColor;
+  padding: 0 4px;
+  border-radius: 2px;
+  color: var(--muted);
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+/* 空卡(no_data)提示 */
+.ai-card__nodata {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* Stale 横幅(沿用 .datasource-banner 基线) */
+[data-module="ai-usage"] .ai-card__stale {
+  font-size: 0.8125rem;
+  color: var(--text-sub);
+}
+
+/* 进度条 — e-ink 用 border + 深灰填充，无 gradient/animation */
+[data-module="ai-usage"] .metric-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+[data-module="ai-usage"] .ai-metric-bar {
+  height: 12px;
+  width: 100%;
+  background: var(--border);
+  border: 1px solid var(--border-strong);
+  border-radius: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+[data-module="ai-usage"] .ai-metric-bar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--pct, 0%);
+  background: var(--text-sub);   /* 灰度友好深灰 */
+  /* e-ink: NO transition / NO animation */
+}
+
+[data-module="ai-usage"] .ai-metric-bar-label {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--text-sub);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-module="ai-usage"] .metric-unknown {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+[data-module="ai-usage"] .resets-at,
+[data-module="ai-usage"] .collected-at {
+  font-size: 0.8125rem;
+  color: var(--text-sub);
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-module="ai-usage"] .window-label {
+  color: var(--muted);
+}
+
+/* 阈值变色 — 仅彩色设备(e-ink/灰度被 @media (color) 排除，只见深灰) */
+@media (color) {
+  [data-provider][data-pct-warn] .ai-metric-bar::after {
+    background: var(--warn);
+  }
+  [data-provider][data-pct-error] .ai-metric-bar::after {
+    background: var(--error);
+  }
+}
+
+/* e-ink / print:边框化，去圆角，进度条统一深灰 */
+@media print {
+  [data-module="ai-usage"] .ai-metric-bar {
+    border: 1px solid #000;
+    border-radius: 0;
+    background: #fff;
+  }
+  [data-module="ai-usage"] .ai-metric-bar::after {
+    background: #555;
+  }
+  .badge-manual {
+    color: #555;
+  }
+}
+
+/* Kindle narrow + e-ink (color-index: 2 = 2-color / grayscale) */
+@media screen and (max-width: 800px) and (color-index: 2) {
+  [data-module="ai-usage"] .ai-metric-bar {
+    border-radius: 0;
+  }
+}
+
+/* ── End AI 额度 ────────────────────────────────────────────────────────────── */

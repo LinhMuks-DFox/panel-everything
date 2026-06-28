@@ -125,6 +125,69 @@ def _datetimeformat(value: datetime | None, fmt: str = "%Y-%m-%d %H:%M UTC") -> 
 
 templates.env.filters["datetimeformat"] = _datetimeformat
 
+
+# ---------------------------------------------------------------------------
+# TASK-033: Jinja2 globals for AI 额度卡片 state encoding (ARCH-004)
+# ---------------------------------------------------------------------------
+
+def _ai_status_class(p: Any) -> str:  # noqa: ANN401 — p is AiProviderStatus at runtime
+    """Map an AiProviderStatus to a status-dot CSS class suffix.
+
+    no_data → "nodata" (◌)   stale → "stale" (○)
+    error   → "error"  (●)   used_percent ≥ 90 → "error", ≥ 70 → "warn",
+    otherwise → "ok".  Colour is never the sole indicator (shape + text accompany).
+    """
+    status = getattr(p, "status", "no_data")
+    if status == "no_data":
+        return "nodata"
+    if getattr(p, "stale", False):
+        return "stale"
+    if status == "error":
+        return "error"
+    pct = getattr(p, "used_percent", None)
+    if pct is not None:
+        if pct >= 90:
+            return "error"
+        if pct >= 70:
+            return "warn"
+    return "ok"
+
+
+def _ai_status_symbol(p: Any) -> str:  # noqa: ANN401
+    """Return the Unicode shape symbol for an AiProviderStatus.
+
+    ● ok/error(>90)   ◐ warn(>70)   ○ stale   ◌ no_data
+    (error is rendered ● — red is ignored on e-ink but the symbol still reads
+    as "filled / at-limit"; stale uses ○ to distinguish from a healthy fill.)
+    """
+    match _ai_status_class(p):
+        case "ok" | "error":
+            return "●"
+        case "warn":
+            return "◐"
+        case "stale":
+            return "○"
+        case _:
+            return "◌"
+
+
+def _ai_pct_warn(p: Any) -> bool:  # noqa: ANN401
+    """True when used_percent is in the warning band [70, 90)."""
+    pct = getattr(p, "used_percent", None)
+    return pct is not None and 70 <= pct < 90
+
+
+def _ai_pct_error(p: Any) -> bool:  # noqa: ANN401
+    """True when used_percent is in the error band [90, ∞)."""
+    pct = getattr(p, "used_percent", None)
+    return pct is not None and pct >= 90
+
+
+templates.env.globals["ai_status_class"] = _ai_status_class
+templates.env.globals["ai_status_symbol"] = _ai_status_symbol
+templates.env.globals["ai_pct_warn"] = _ai_pct_warn
+templates.env.globals["ai_pct_error"] = _ai_pct_error
+
 # Stale threshold for Tailscale nodes when no settings are available.
 _DEFAULT_TAILSCALE_STALE_SECONDS = 90
 
@@ -289,6 +352,17 @@ async def index(request: Request) -> HTMLResponse:
 
     nodes_online = sum(1 for n in nodes_with_stale if n.online_state == "ONLINE")
 
+    # --- TASK-033: Load AI usage providers for SSR _ai_card rendering ---
+    ai_providers: list[Any] = []
+    if repo is not None:
+        try:
+            from panel.api.ai_usage import get_ai_usage_data  # noqa: PLC0415
+
+            ai_usage = await get_ai_usage_data(repo)
+            ai_providers = ai_usage.providers
+        except Exception:
+            logger.exception("Failed to load AI usage data for SSR")
+
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -306,6 +380,8 @@ async def index(request: Request) -> HTMLResponse:
             "collector_error": tailscale_collector_error,
             "is_stale": tailscale_is_stale,
             "stale_seconds": tailscale_stale_seconds,
+            # TASK-033: AI 额度卡片
+            "ai_providers": ai_providers,
         },
     )
 

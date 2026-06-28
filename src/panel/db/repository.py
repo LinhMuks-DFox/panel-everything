@@ -591,7 +591,47 @@ async def _get_ai_provider_id(self: Repository, provider: str) -> int | None:
     return row["id"] if row is not None else None
 
 
+@dataclass(slots=True)
+class AiProviderRow:
+    """ai_provider 表的单行映射(静态配置元数据)。"""
+
+    id: int
+    provider: str
+    display_name: str
+    source_type: str
+    window_seconds: int
+    enabled: bool
+
+
+async def _get_ai_providers(self: Repository) -> list[AiProviderRow]:
+    """返回所有 enabled=1 的 ai_provider 行,按 id 升序。
+
+    供 AI 额度卡片(TASK-033)读取 provider 元数据 + 用作 latest_snapshot
+    的 target_id 映射(id ↔ provider)。
+    """
+    async with self._conn.execute(
+        """
+        SELECT id, provider, display_name, source_type, window_seconds, enabled
+        FROM ai_provider
+        WHERE enabled = 1
+        ORDER BY id
+        """
+    ) as cur:
+        return [
+            AiProviderRow(
+                id=r["id"],
+                provider=r["provider"],
+                display_name=r["display_name"],
+                source_type=r["source_type"],
+                window_seconds=r["window_seconds"],
+                enabled=bool(r["enabled"]),
+            )
+            async for r in cur
+        ]
+
+
 Repository.get_ai_provider_id = _get_ai_provider_id  # type: ignore[attr-defined]
+Repository.get_ai_providers = _get_ai_providers  # type: ignore[attr-defined]
 
 
 # --------------------------------------------------------------------------- #
