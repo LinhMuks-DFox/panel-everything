@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+  {# ---- Data-source status banner ---- #}
+  {% include "partials/_datasource_status.html" %}
+
+  {# ---- Module card slots (module cards inject their partials here) ---- #}
+  {#
+     Convention for module Coders (ARCH-002/003):
+     - Add your partial file as  partials/_<module>.html
+     - Each root element must be  <section class="card" data-module="<name>">
+     - Include it below with:  {% include "partials/_<module>.html" %}
+     Example:
+       {% include "partials/_vm_card.html" %}
+       {% include "partials/_node_card.html" %}
+       {% include "partials/_gpu_card.html" %}
+  #}
+
+  {# Placeholder shown when no module cards are present yet #}
+  {% if not collector_statuses %}
+  <section class="card card--empty" data-module="placeholder">
+    <p class="card-empty-msg">采集器尚未注册。模块卡就绪后将在此显示。</p>
+  </section>
+  {% endif %}
+
+{% endblock %}

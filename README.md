@@ -36,6 +36,54 @@
 └── tests/                     # 测试
 ```
 
+## 本地运行 / docker 运行
+
+### 本地开发(需要 Python 3.12）
+
+```bash
+# 创建虚拟环境并安装(含开发依赖)
+python3.12 -m venv .venv
+source .venv/bin/activate          # zsh/bash;Windows PowerShell 用 .venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+
+# 启动(uvloop,单 worker,监听 :8080)
+panel                               # 等价于 python -m panel.main
+# 或显式:
+uvicorn panel.main:app --host 0.0.0.0 --port 8080 --loop uvloop
+
+# 健康检查
+curl http://localhost:8080/healthz  # → {"status":"ok","db":"ok","time":"..."}
+
+# 测试与 lint
+ruff check src tests
+pytest
+```
+
+### docker 运行
+
+```bash
+cp .env.example .env                # 按需修改;数据落 ./data(已挂卷)
+
+docker compose up -d --build        # 起容器(restart: unless-stopped, mem_limit 512m)
+docker compose ps                   # 等 STATUS 变 healthy
+curl http://localhost:8080/healthz
+
+docker compose logs -f panel
+docker compose down
+```
+
+### 多 arch 镜像构建(树莓派 arm64 主目标)
+
+```bash
+# 需 buildx + qemu(首次:docker run --privileged --rm tonistiigi/binfmt --install arm64)
+docker buildx create --name panelbuilder --driver docker-container --use
+docker buildx build --platform linux/arm64,linux/amd64 -t panel-everything:latest .
+```
+
+> 容器以非 root 用户 `app` 运行;SQLite 数据库落在挂载卷 `/data/panel.db`。
+> `mem_limit: 512m` 使用 compose v2 顶层字段(Docker Engine 直接生效);
+> 若改用 Swarm/`docker stack` 部署需切换到 `deploy.resources.limits.memory`。
+
 ## 状态
 
-> 项目阶段：框架搭建中
+> 项目阶段：基础设施搭建中(MS-001 / TASK-001 已完成工程骨架、容器化与 /healthz)

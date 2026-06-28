@@ -20,8 +20,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from panel.api import health
+from panel.collectors import register_collectors
+from panel.collectors.scheduler import build_scheduler
 from panel.config.scrub import setup_logging
 from panel.config.settings import Settings, get_settings
+from panel.db import connection, migrate
+from panel.db.repository import Repository
+from panel.web import routes as web_routes
 
 
 @asynccontextmanager
@@ -48,14 +53,30 @@ async def lifespan(app: FastAPI):  # noqa: ANN201 (asynccontextmanager 推断返
     # scheduler.shutdown(wait=False)
     # await conn.close()
     """
-    # TASK-002: 在此初始化 DB 连接并挂到 app.state.db / app.state.repo。
-    # TASK-003: 在此 register_collectors(...) + build_scheduler(...).start()。
+    settings = get_settings()
+    # Expose settings on app.state so request handlers (e.g. SSR routes reading
+    # stale_threshold_seconds) can pick up config rather than falling back to defaults.
+    app.state.settings = settings
+
+    # --- TASK-002: DB 初始化(WAL 连接 + 幂等建表),挂到 app.state ---
+    conn = await connection.connect(settings.db_path)  # 开 WAL
+    await migrate.run(conn)  # 幂等建表
+    app.state.db = conn
+    app.state.repo = Repository(conn)
+
+    # --- TASK-003: 采集器注册 + scheduler 启停 ---
+    # 先集中注册各模块采集器(本期为空占位),再读 registry 装配调度。
+    register_collectors(settings, app.state.repo)
+    scheduler = build_scheduler(app.state.repo)
+    scheduler.start()
+    app.state.scheduler = scheduler
+
     try:
         yield
     finally:
-        # TASK-003: scheduler.shutdown(wait=False)
-        # TASK-002: await app.state.db.close()
-        pass
+        # 先停调度(不等待在跑的任务),再关 DB 连接,顺序见 ARCH-001。
+        scheduler.shutdown(wait=False)
+        await conn.close()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -74,15 +95,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # --- TASK-004: 静态资源挂载点 ---
-    # from fastapi.staticfiles import StaticFiles
-    # from pathlib import Path
-    # static_dir = Path(__file__).parent / "web" / "static"
-    # app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    # --- TASK-004: 静态资源挂载 ---
+    from pathlib import Path
+
+    from fastapi.staticfiles import StaticFiles
+
+    static_dir = Path(__file__).parent / "web" / "static"
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     # --- 路由集中挂载 ---
     app.include_router(health.router)
-    # TASK-004: app.include_router(web.routes.router)   # SSR GET /
+    app.include_router(web_routes.router)          # TASK-004: SSR GET /
     # ARCH-002/003: 各模块在此集中 include_router(...)。
 
     return app
@@ -99,7 +122,7 @@ def main() -> None:
     uvicorn.run(
         "panel.main:app",
         host="0.0.0.0",  # noqa: S104 (容器内监听;外网由 Tailscale 隔离)
-        port=8080,
+        port=get_settings().port,
         loop="uvloop",
         workers=1,
     )

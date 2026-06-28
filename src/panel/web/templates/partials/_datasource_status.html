@@ -1,0 +1,44 @@
+{#
+  Data-source status bar (TASK-004 / ARCH-001).
+
+  Renders each collector's last-run status as a pill:
+    up    → ● 在线      (status-ok)
+    down  → ○ 离线      (status-error)
+    error → ○ 异常      (status-error)
+    stale → ◌ 数据陈旧  (status-stale)
+
+  Three-layered encoding: color + shape symbol + text label.
+  No JS required; all information present in SSR output.
+#}
+
+{% if collector_statuses %}
+<section class="datasource-banner{% if any_issues %} datasource-banner--issues{% endif %}" aria-label="数据源状态">
+  <span class="datasource-banner__label">数据源</span>
+  <ul class="datasource-list" role="list">
+    {% for ds in collector_statuses %}
+    <li class="datasource-item status-{{ ds.status }}" title="{{ ds.name }} — {{ ds.ran_at }}{% if ds.error %} | {{ ds.error }}{% endif %}">
+      {%- if ds.status == "up" -%}
+        <span class="status-dot status-ok" aria-hidden="true">●</span>
+        <span class="datasource-name">{{ ds.name }}</span>
+        <span class="datasource-label">在线</span>
+      {%- elif ds.status == "stale" -%}
+        <span class="status-dot status-stale" aria-hidden="true">◌</span>
+        <span class="datasource-name">{{ ds.name }}</span>
+        <span class="datasource-label">数据陈旧</span>
+      {%- elif ds.status == "down" -%}
+        <span class="status-dot status-error" aria-hidden="true">○</span>
+        <span class="datasource-name">{{ ds.name }}</span>
+        <span class="datasource-label">离线</span>
+      {%- else -%}
+        <span class="status-dot status-error" aria-hidden="true">○</span>
+        <span class="datasource-name">{{ ds.name }}</span>
+        <span class="datasource-label">异常</span>
+      {%- endif -%}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if any_issues %}
+  <span class="datasource-banner__warn">⚠ 部分数据源异常或陈旧，数据可能不准确</span>
+  {% endif %}
+</section>
+{% endif %}

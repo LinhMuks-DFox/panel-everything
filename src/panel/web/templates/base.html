@@ -1,0 +1,25 @@
+<title>Panel Everything</title>
+<meta name="description" content="一站式设备监控面板 — Panel Everything">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% if is_eink %}<meta http-equiv="refresh" content="60">{% endif %}
+<link rel="stylesheet" href="/static/css/panel.css">
+{% block head %}{% endblock %}
+
+<header class="site-header">
+  <span class="site-title">Panel Everything</span>
+  <span class="site-time" id="site-time">{{ now[:19] | replace("T", " ") }} UTC</span>
+</header>
+
+<main class="panel-grid" id="panel-grid" data-poll-interval="45">
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="site-footer">
+  <span>Panel Everything</span>
+</footer>
+
+{% if not is_eink %}
+<script src="/static/js/panel.js"></script>
+{% endif %}
+{% block scripts %}{% endblock %}

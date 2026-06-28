@@ -1,0 +1,456 @@
+/*
+ * Panel Everything — panel.css
+ * TASK-004 / ARCH-001
+ *
+ * Design constraints:
+ *   - e-ink hard rules: NO box-shadow, NO CSS animation/transition,
+ *     NO opacity < 1 overlays, NO color-only state encoding.
+ *   - Three-layered state encoding: color + shape symbol + text label.
+ *   - Three breakpoints: <600px (single col), 600–1024px (2 col), >1024px (3+ col).
+ *   - High contrast: pure-black text on white ground for e-ink; inverted for dark.
+ */
+
+/* ── Design tokens ──────────────────────────────────────────────────────── */
+:root {
+  /* Surfaces */
+  --bg:          #0f1117;
+  --surface:     #1a1d27;
+  --surface-alt: #21253a;
+  --border:      #2a2d3a;
+  --border-strong: #3d4260;
+
+  /* Text */
+  --text:        #e2e4ed;
+  --text-sub:    #9ea3bb;
+  --muted:       #6b7088;
+
+  /* Semantic state — color layer (form+text layers also always present) */
+  --ok:          #4ade80;
+  --ok-dim:      #1a3d2b;
+  --warn:        #f59e0b;
+  --warn-dim:    #3d2e0a;
+  --error:       #f87171;
+  --error-dim:   #3d1a1a;
+  --stale:       #6b7088;
+  --stale-dim:   #1e202a;
+
+  /* Typography */
+  --font-ui:   system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Spacing scale */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* Card sizing */
+  --card-min: 280px;
+  --card-radius: 6px;
+}
+
+/* ── Reset & base ───────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 0.9375rem;   /* 15px — slightly large for readability on e-ink */
+  line-height: 1.6;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+ul, ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: var(--ok);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--ok);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ── Site header ────────────────────────────────────────────────────────── */
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3) var(--sp-6);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.site-title {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.site-time {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Main grid ──────────────────────────────────────────────────────────── */
+.panel-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+  gap: var(--sp-5);
+  padding: var(--sp-6);
+  align-content: start;
+}
+
+/* Override: datasource-banner spans full width regardless of grid columns */
+.datasource-banner {
+  grid-column: 1 / -1;
+}
+
+/* ── Breakpoints ────────────────────────────────────────────────────────── */
+
+/* ≤ 599px — iPhone portrait / Kindle: single column, bigger touch targets */
+@media (max-width: 599px) {
+  .panel-grid {
+    grid-template-columns: 1fr;
+    gap: var(--sp-4);
+    padding: var(--sp-4);
+  }
+
+  .site-header {
+    padding: var(--sp-3) var(--sp-4);
+  }
+
+  .card {
+    padding: var(--sp-4);
+  }
+}
+
+/* 600–1023px — iPad portrait: 2 columns */
+@media (min-width: 600px) and (max-width: 1023px) {
+  .panel-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ≥ 1024px — iPad landscape / desktop: auto-fill ≥3 columns */
+@media (min-width: 1024px) {
+  .panel-grid {
+    grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+  }
+}
+
+/* ── Card ───────────────────────────────────────────────────────────────── */
+/*
+ * e-ink: border only — NO box-shadow.
+ * Module cards must use <section class="card" data-module="<name>">.
+ */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  overflow: hidden;
+}
+
+.card:focus-within {
+  border-color: var(--border-strong);
+}
+
+.card-title {
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-sub);
+  margin: 0;
+}
+
+.card-value {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.card-meta {
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+/* Empty placeholder card */
+.card--empty {
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  border-style: dashed;
+  border-color: var(--border);
+}
+
+.card-empty-msg {
+  color: var(--muted);
+  font-size: 0.875rem;
+  text-align: center;
+  margin: 0;
+}
+
+/* ── Status dot (shape layer) ───────────────────────────────────────────── */
+/*
+ * Three-layered encoding: color + shape symbol + text label.
+ * Symbols: ● ok  ◐ warn  ○ down/error  ◌ stale
+ * Always readable on e-ink (shape + text don't require color).
+ */
+.status-dot {
+  font-family: var(--font-mono);
+  font-size: 1em;
+  line-height: 1;
+  display: inline-block;
+  /* Prevent symbol reflow */
+  width: 1.1em;
+  text-align: center;
+}
+
+.status-dot.status-ok    { color: var(--ok); }
+.status-dot.status-warn  { color: var(--warn); }
+.status-dot.status-error { color: var(--error); }
+.status-dot.status-stale { color: var(--stale); }
+
+/* Inline status indicator (used in cards) */
+.status-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: 0.875rem;
+}
+
+.status-inline .status-dot {
+  font-size: 0.9em;
+}
+
+.status-label {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Status pill (for compact display) ─────────────────────────────────── */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.status-pill.status-ok    { color: var(--ok);    background: var(--ok-dim); }
+.status-pill.status-warn  { color: var(--warn);  background: var(--warn-dim); }
+.status-pill.status-error { color: var(--error); background: var(--error-dim); }
+.status-pill.status-stale { color: var(--stale); background: var(--stale-dim); }
+
+/* ── Metric bar (utilisation / VRAM) ───────────────────────────────────── */
+/*
+ * .metric-bar — reusable for GPU/CPU util, VRAM, etc.
+ * Usage:
+ *   <div class="metric-bar">
+ *     <div class="metric-bar__fill status-ok" style="--pct: 72%"></div>
+ *   </div>
+ */
+.metric-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--border);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.metric-bar__fill {
+  height: 100%;
+  width: var(--pct, 0%);
+  border-radius: 2px;
+  /* e-ink: NO transition */
+}
+
+.metric-bar__fill.status-ok    { background: var(--ok); }
+.metric-bar__fill.status-warn  { background: var(--warn); }
+.metric-bar__fill.status-error { background: var(--error); }
+.metric-bar__fill.status-stale { background: var(--stale); }
+
+.metric-bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8125rem;
+  color: var(--text-sub);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Data-source status banner ──────────────────────────────────────────── */
+.datasource-banner {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.datasource-banner--issues {
+  border-color: var(--warn);
+}
+
+.datasource-banner__label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex-shrink: 0;
+  padding-top: 3px;
+}
+
+.datasource-banner__warn {
+  font-size: 0.8125rem;
+  color: var(--warn);
+  width: 100%;
+  margin-top: var(--sp-1);
+}
+
+.datasource-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  flex: 1;
+}
+
+.datasource-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: 0.875rem;
+}
+
+.datasource-name {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.datasource-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* State-specific text colour for the label (text layer) */
+.datasource-item.status-down  .datasource-label,
+.datasource-item.status-error .datasource-label { color: var(--error); }
+.datasource-item.status-stale .datasource-label { color: var(--stale); }
+.datasource-item.status-up    .datasource-label { color: var(--ok); }
+
+/* ── Site footer ────────────────────────────────────────────────────────── */
+.site-footer {
+  padding: var(--sp-3) var(--sp-6);
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ── e-ink / print overrides ────────────────────────────────────────────── */
+/*
+ * When the client is e-ink (class applied by server or via ?eink=1),
+ * force high-contrast, shadow-free rendering.
+ * Also triggered by print media (for screenshot/PDF export).
+ */
+@media print {
+  body {
+    background: #fff;
+    color: #000;
+  }
+
+  .card,
+  .datasource-banner {
+    border: 1px solid #000;
+    background: #fff;
+  }
+
+  .site-header,
+  .site-footer {
+    background: #fff;
+    border-color: #000;
+  }
+
+  .text-sub,
+  .muted,
+  .datasource-label,
+  .card-meta {
+    color: #444;
+  }
+
+  .status-dot.status-ok    { color: #000; }
+  .status-dot.status-warn  { color: #000; }
+  .status-dot.status-error { color: #000; }
+  .status-dot.status-stale { color: #666; }
+}
+
+/* ── Reduced motion ─────────────────────────────────────────────────────── */
+/*
+ * Panel Everything has no animations by design (e-ink constraint),
+ * but this rule ensures we never regress.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Wide content containers ────────────────────────────────────────────── */
+/* Any table or pre inside a card must scroll horizontally, not break layout */
+.card table,
+.card pre,
+.card code {
+  max-width: 100%;
+}
+
+.card .table-wrap,
+.card .code-wrap {
+  overflow-x: auto;
+}

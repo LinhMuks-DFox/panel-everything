@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "panel-everything"
+version = "0.1.0"
+description = "一站式设备监控面板 — 树莓派部署的多终端设备监控 Web app"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Keio Takamichi Lab" }]
+
+# 全量运行时依赖(TASK-001 一次性声明,后续模块卡不再改动)
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "uvloop",
+    "jinja2",
+    "aiosqlite",
+    "apscheduler",
+    "httpx",
+    "aiohttp",
+    "asyncssh",
+    "azure-identity",
+    "azure-mgmt-compute",
+    "pydantic",
+    "pydantic-settings",
+    "python-multipart",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
+]
+
+[project.scripts]
+panel = "panel.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/panel"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "ANN", "ASYNC"]
+ignore = [
+    "ANN401", # 允许 **kwargs 等处的 Any
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试中允许 assert、缺省类型注解、绑定到所有网卡等
+"tests/**" = ["S101", "ANN", "S104"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
